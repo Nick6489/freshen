@@ -45,6 +45,7 @@ pub(crate) fn launch(plan: &Plan, executable: &Path) -> Result<Handoff> {
     command
         .arg("--freshen-apply")
         .arg(txn.join("plan.json"))
+        .arg(&plan.token)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -90,11 +91,14 @@ pub fn run_helper(arguments: impl IntoIterator<Item = OsString>) -> Result<bool>
     if args.first().is_none_or(|arg| arg != "--freshen-apply") {
         return Ok(false);
     }
-    if args.len() != 2 {
-        return Err(Error::Helper("expected --freshen-apply PLAN".into()));
+    if args.len() != 3 {
+        return Err(Error::Helper("expected --freshen-apply PLAN TOKEN".into()));
     }
     let path = PathBuf::from(&args[1]);
     let plan = load_plan(&path)?;
+    if args[2] != plan.token.as_str() {
+        return Err(Error::Helper("stale helper launch token".into()));
+    }
     let _guard = lock(&plan.policy.root)?;
     let result = execute(&plan);
     if let Err(error) = &result {
@@ -161,6 +165,9 @@ fn execute(plan: &Plan) -> Result<()> {
             return Ok(());
         }
         if let Some(status) = child.try_wait()? {
+            // Windows can retain an image mapping through an open process
+            // handle. Release it before restoring the previous executable.
+            drop(child);
             rollback(
                 plan,
                 format!("new application exited without confirming startup: {status}"),

@@ -2,6 +2,7 @@
 //!
 //! Operations are blocking: call them on a worker thread, not a GUI event thread.
 //! No async runtime, window handle, or toolkit is required.
+#![doc = include_str!("../README.md")]
 
 mod archive;
 mod error;
@@ -9,6 +10,9 @@ mod fsutil;
 mod helper;
 mod install;
 mod manifest;
+pub mod shared;
+#[cfg(test)]
+mod tests;
 mod transport;
 mod updater;
 

@@ -1,0 +1,29 @@
+name: Rust
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - name: Format
+        run: cargo +stable fmt --all -- --check
+      - name: Lint
+        run: cargo +stable clippy --all-targets --locked -- -D warnings
+      - name: Unit and process integration tests
+        run: cargo +stable test --all-targets --locked
+      - name: Documentation tests
+        run: cargo +stable test --doc --locked
+      - name: Check distributable crate
+        run: cargo +stable package --locked

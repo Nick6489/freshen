@@ -188,7 +188,9 @@ pub(crate) fn lock(root: &Path) -> Result<InstallationLock> {
         .write(true)
         .open(path)?;
     file.try_lock_exclusive().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::WouldBlock {
+        if e.raw_os_error() == fs2::lock_contended_error().raw_os_error()
+            || e.kind() == std::io::ErrorKind::WouldBlock
+        {
             Error::Busy
         } else {
             e.into()
@@ -475,7 +477,7 @@ fn rollback_inner(plan: &Plan, journal: &mut Journal) -> Result<()> {
             if source.is_dir() {
                 remove_tree(&destination)?;
             }
-            copy_tree(&source, &destination)?;
+            crate::fsutil::copy_tree_with_retry(&source, &destination)?;
         } else {
             remove_tree(&destination)?;
         }
@@ -536,4 +538,159 @@ pub(crate) fn rollback(plan: &Plan, detail: String) -> Result<()> {
     let mut journal = load_journal(&txn)?;
     journal.status.detail = detail;
     rollback_inner(plan, &mut journal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::{manifest, signed, trust};
+
+    fn fixture() -> (tempfile::TempDir, Plan) {
+        let root = tempfile::tempdir().unwrap();
+        let canonical = fs::canonicalize(root.path()).unwrap();
+        let release = manifest();
+        let plan = Plan {
+            policy: InstallPolicy::portable(canonical, "app.exe".into(), vec!["app.exe".into()]),
+            signed: signed(&release),
+            trust: trust(),
+            target: "test-target".into(),
+            parent_pid: std::process::id(),
+            relaunch_args: vec![],
+            token: "a".repeat(64),
+        };
+        let txn = transaction(&plan.policy.root).unwrap();
+        fs::create_dir_all(txn.join("stage")).unwrap();
+        fs::write(txn.join("stage/app.exe"), b"new").unwrap();
+        fs::write(txn.join("plan.json"), serde_json::to_vec(&plan).unwrap()).unwrap();
+        let journal = Journal {
+            status: InstallStatus {
+                state: InstallState::Prepared,
+                version: "2.0.0".into(),
+                detail: String::new(),
+            },
+            touched: vec![],
+            existing: BTreeSet::new(),
+        };
+        save_journal(&txn, &journal).unwrap();
+        (root, plan)
+    }
+
+    #[test]
+    fn applies_owned_files_and_keeps_user_data() {
+        let (_root, plan) = fixture();
+        fs::write(plan.policy.root.join("app.exe"), b"old").unwrap();
+        fs::write(plan.policy.root.join("settings.ini"), b"precious").unwrap();
+        apply(&plan).unwrap();
+        assert_eq!(fs::read(plan.policy.root.join("app.exe")).unwrap(), b"new");
+        assert_eq!(
+            fs::read(plan.policy.root.join("settings.ini")).unwrap(),
+            b"precious"
+        );
+        assert_eq!(
+            installation_status(&plan.policy.root)
+                .unwrap()
+                .unwrap()
+                .state,
+            InstallState::AwaitingConfirmation
+        );
+        assert!(discard_finished_installation(&plan.policy.root).is_err());
+        rollback(&plan, "test failure".into()).unwrap();
+        assert_eq!(fs::read(plan.policy.root.join("app.exe")).unwrap(), b"old");
+        discard_finished_installation(&plan.policy.root).unwrap();
+        assert!(installation_status(&plan.policy.root).unwrap().is_none());
+    }
+
+    #[test]
+    fn rollback_removes_files_that_did_not_previously_exist() {
+        let (_root, plan) = fixture();
+        apply(&plan).unwrap();
+        rollback(&plan, "test failure".into()).unwrap();
+        assert!(!plan.policy.root.join("app.exe").exists());
+    }
+
+    #[test]
+    fn recovers_a_crash_after_intent_before_replacement() {
+        let (_root, plan) = fixture();
+        let txn = transaction(&plan.policy.root).unwrap();
+        fs::create_dir(txn.join("backup")).unwrap();
+        fs::write(txn.join("backup/app.exe"), b"old").unwrap();
+        fs::write(plan.policy.root.join("app.exe"), b"partial").unwrap();
+        let mut journal = load_journal(&txn).unwrap();
+        journal.status.state = InstallState::Applying;
+        journal.existing.insert("app.exe".into());
+        journal.touched.push("app.exe".into());
+        save_journal(&txn, &journal).unwrap();
+        let status = recover_installation(&plan.policy.root).unwrap();
+        assert_eq!(status.state, InstallState::RolledBack);
+        assert_eq!(fs::read(plan.policy.root.join("app.exe")).unwrap(), b"old");
+        assert_eq!(
+            recover_installation(&plan.policy.root).unwrap().state,
+            InstallState::RolledBack
+        );
+    }
+
+    #[test]
+    fn missing_backup_does_not_report_successful_rollback() {
+        let (_root, plan) = fixture();
+        fs::write(plan.policy.root.join("app.exe"), b"old").unwrap();
+        apply(&plan).unwrap();
+        fs::remove_file(
+            transaction(&plan.policy.root)
+                .unwrap()
+                .join("backup/app.exe"),
+        )
+        .unwrap();
+        assert!(matches!(
+            rollback(&plan, "failure".into()),
+            Err(Error::Recovery(_))
+        ));
+        assert_eq!(
+            installation_status(&plan.policy.root)
+                .unwrap()
+                .unwrap()
+                .state,
+            InstallState::RollingBack
+        );
+    }
+
+    #[test]
+    fn tampered_staging_fails_before_touching_installation() {
+        let (_root, plan) = fixture();
+        fs::write(plan.policy.root.join("app.exe"), b"old").unwrap();
+        fs::write(
+            transaction(&plan.policy.root)
+                .unwrap()
+                .join("stage/app.exe"),
+            b"bad",
+        )
+        .unwrap();
+        assert!(matches!(apply(&plan), Err(Error::HashMismatch(_))));
+        assert_eq!(fs::read(plan.policy.root.join("app.exe")).unwrap(), b"old");
+    }
+
+    #[test]
+    fn installation_lock_excludes_another_writer() {
+        let (_root, plan) = fixture();
+        let _guard = lock(&plan.policy.root).unwrap();
+        assert!(matches!(lock(&plan.policy.root), Err(Error::Busy)));
+    }
+
+    #[test]
+    fn locally_owned_inventory_cannot_expand_from_remote_metadata() {
+        let (_root, plan) = fixture();
+        let mut artifact = manifest().artifacts.remove(0);
+        let mut extra = artifact.files[0].clone();
+        extra.path = "settings.ini".into();
+        artifact.files.push(extra);
+        assert!(plan.policy.validate(&artifact).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn destination_symlink_is_rejected() {
+        let (_root, plan) = fixture();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::os::unix::fs::symlink(outside.path(), plan.policy.root.join("app.exe")).unwrap();
+        assert!(matches!(apply(&plan), Err(Error::UnsafePath(_))));
+    }
 }

@@ -96,6 +96,24 @@ pub(crate) fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     sync_dir(destination)
 }
 
+pub(crate) fn copy_tree_with_retry(source: &Path, destination: &Path) -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match copy_tree(source, destination) {
+            Err(Error::Io(error))
+                if std::time::Instant::now() < deadline
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::WouldBlock
+                    ) =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            result => return result,
+        }
+    }
+}
+
 pub(crate) fn remove_tree(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if is_link(&metadata) => Err(Error::UnsafePath(path.display().to_string())),

@@ -43,6 +43,9 @@ pub struct Candidate {
     pub(crate) artifact: Artifact,
 }
 impl Candidate {
+    pub fn signed_manifest(&self) -> &SignedManifest {
+        &self.signed
+    }
     pub fn release(&self) -> &ReleaseManifest {
         &self.release
     }
@@ -62,8 +65,8 @@ impl PreparedUpdate {
     pub fn release(&self) -> &ReleaseManifest {
         self.candidate.release()
     }
-    pub fn staged_directory(&self) -> &Path {
-        self.temporary.path()
+    pub fn staged_directory(&self) -> std::path::PathBuf {
+        self.temporary.path().join("stage")
     }
 }
 
@@ -173,6 +176,7 @@ impl<T: Transport> Updater<T> {
             || release.channel != self.channel
             || release.version <= self.current_version
             || candidate.artifact.target != self.target
+            || (self.channel == "stable" && !release.version.pre.is_empty())
         {
             return Err(Error::Invalid(
                 "candidate does not match updater policy".into(),

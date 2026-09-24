@@ -1,5 +1,6 @@
 use crate::{Error, Result};
 use reqwest::{blocking::Client, redirect::Policy};
+use rustls_platform_verifier::BuilderVerifierExt;
 use std::{
     io::{Read, Write},
     sync::{
@@ -54,7 +55,18 @@ pub struct HttpTransport {
 impl HttpTransport {
     /// HTTPS only, including redirects, with bounded connect and total timeouts.
     pub fn new(timeout: Duration) -> Result<Self> {
+        // Configure this client explicitly instead of changing the host's global
+        // crypto provider. Certificate verification still uses the platform roots.
+        let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .map_err(|e| Error::Invalid(e.to_string()))?
+        .with_platform_verifier()
+        .map_err(|e| Error::Invalid(e.to_string()))?
+        .with_no_client_auth();
         let client = Client::builder()
+            .tls_backend_preconfigured(tls)
             .https_only(true)
             .connect_timeout(Duration::from_secs(15))
             .timeout(timeout)
