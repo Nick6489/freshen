@@ -21,6 +21,8 @@ pub enum InstallLayout {
     Portable {
         owned_files: Vec<String>,
         executable: String,
+        #[serde(default)]
+        expandable_directories: Vec<String>,
     },
     /// `root` is the existing parent of this bundle. No implicit /Applications move.
     /// Version 1 supports bundles containing regular files, not framework symlinks.
@@ -42,11 +44,23 @@ pub struct InstallPolicy {
 
 impl InstallPolicy {
     pub fn portable(root: PathBuf, executable: String, owned_files: Vec<String>) -> Self {
+        Self::portable_expanding(root, executable, owned_files, vec![])
+    }
+
+    /// Allow additional signed files strictly beneath host-named directories.
+    /// Every owned file must still be present, including the executable.
+    pub fn portable_expanding(
+        root: PathBuf,
+        executable: String,
+        owned_files: Vec<String>,
+        expandable_directories: Vec<String>,
+    ) -> Self {
         Self {
             root,
             layout: InstallLayout::Portable {
                 owned_files,
                 executable,
+                expandable_directories,
             },
             exit_timeout_secs: 120,
             confirmation_timeout_secs: 120,
@@ -65,6 +79,7 @@ impl InstallPolicy {
             InstallLayout::Portable {
                 owned_files,
                 executable,
+                expandable_directories,
             } => {
                 if artifact.kind != PackageKind::Files {
                     return Err(Error::Invalid("expected a files package".into()));
@@ -76,11 +91,20 @@ impl InstallPolicy {
                 }
                 let received: BTreeSet<_> =
                     artifact.files.iter().map(|f| f.path.as_str()).collect();
+                for directory in expandable_directories {
+                    check_path(directory)?;
+                }
                 if owned.len() != owned_files.len()
-                    || owned != received
+                    || !owned.is_subset(&received)
+                    || received.difference(&owned).any(|path| {
+                        !expandable_directories.iter().any(|directory| {
+                            path.strip_prefix(directory.as_str())
+                                .is_some_and(|suffix| suffix.starts_with('/'))
+                        })
+                    })
                     || !owned.contains(executable.as_str())
                 {
-                    return Err(Error::Invalid("package inventory must exactly match locally owned files and contain the executable".into()));
+                    return Err(Error::Invalid("package inventory must contain all locally owned files and the owned executable; additional files require a locally expandable directory".into()));
                 }
             }
             InstallLayout::MacBundle {
@@ -122,9 +146,14 @@ impl InstallPolicy {
         Ok(())
     }
 
-    pub(crate) fn items(&self) -> Vec<String> {
+    // Only call with the artifact accepted by signature and policy verification.
+    fn items(&self, artifact: &Artifact) -> Vec<String> {
         match &self.layout {
-            InstallLayout::Portable { owned_files, .. } => owned_files.clone(),
+            InstallLayout::Portable { .. } => artifact
+                .files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect(),
             InstallLayout::MacBundle { bundle_name, .. } => vec![bundle_name.clone()],
         }
     }
@@ -398,6 +427,8 @@ pub fn installation_status(root: &Path) -> Result<Option<InstallStatus>> {
 
 pub(crate) fn apply(plan: &Plan) -> Result<()> {
     verify_stage(plan)?;
+    let (_, artifact) = verify_plan(plan)?;
+    let items = plan.policy.items(&artifact);
     let txn = transaction(&plan.policy.root)?;
     let mut journal = load_journal(&txn)?;
     if journal.status.state != InstallState::Prepared {
@@ -406,18 +437,18 @@ pub(crate) fn apply(plan: &Plan) -> Result<()> {
     let backup = txn.join("backup");
     fs::create_dir_all(&backup)?;
     // Capture the entire rollback set before modifying any destination.
-    for item in plan.policy.items() {
-        let destination = safe_join(&plan.policy.root, &item)?;
+    for item in &items {
+        let destination = safe_join(&plan.policy.root, item)?;
         if destination.exists() {
-            copy_tree(&destination, &safe_join(&backup, &item)?)?;
-            journal.existing.insert(item);
+            copy_tree(&destination, &safe_join(&backup, item)?)?;
+            journal.existing.insert(item.clone());
         }
     }
     journal.status.state = InstallState::Applying;
     save_journal(&txn, &journal)?;
     let result = (|| {
-        for item in plan.policy.items() {
-            let destination = safe_join(&plan.policy.root, &item)?;
+        for item in &items {
+            let destination = safe_join(&plan.policy.root, item)?;
             journal.touched.push(item.clone());
             save_journal(&txn, &journal)?;
             if matches!(plan.policy.layout, InstallLayout::MacBundle { .. }) {
@@ -426,10 +457,10 @@ pub(crate) fn apply(plan: &Plan) -> Result<()> {
                 if destination.exists() {
                     fs::rename(&destination, txn.join("previous-bundle"))?;
                 }
-                fs::rename(safe_join(&txn.join("stage"), &item)?, &destination)?;
+                fs::rename(safe_join(&txn.join("stage"), item)?, &destination)?;
                 sync_dir(&plan.policy.root)?;
             } else {
-                let source = safe_join(&txn.join("stage"), &item)?;
+                let source = safe_join(&txn.join("stage"), item)?;
                 let start = std::time::Instant::now();
                 loop {
                     match copy_tree(&source, &destination) {
@@ -461,11 +492,13 @@ pub(crate) fn apply(plan: &Plan) -> Result<()> {
 }
 
 fn rollback_inner(plan: &Plan, journal: &mut Journal) -> Result<()> {
+    let (_, artifact) = verify_plan(plan)?;
+    let items = plan.policy.items(&artifact);
     let txn = transaction(&plan.policy.root)?;
     journal.status.state = InstallState::RollingBack;
     save_journal(&txn, journal)?;
     for item in journal.touched.iter().rev() {
-        if !plan.policy.items().contains(item) {
+        if !items.contains(item) {
             return Err(Error::UnsafePath(item.clone()));
         }
         let destination = safe_join(&plan.policy.root, item)?;
@@ -683,6 +716,167 @@ mod tests {
         extra.path = "settings.ini".into();
         artifact.files.push(extra);
         assert!(plan.policy.validate(&artifact).is_err());
+    }
+
+    fn expanding_fixture() -> (tempfile::TempDir, Plan) {
+        let (root, mut plan) = fixture();
+        plan.policy = InstallPolicy::portable_expanding(
+            plan.policy.root.clone(),
+            "app.exe".into(),
+            vec!["app.exe".into()],
+            vec!["sounds".into()],
+        );
+        let mut release = manifest();
+        let mut extra = release.artifacts[0].files[0].clone();
+        extra.path = "sounds/die4.opus".into();
+        release.artifacts[0].files.push(extra);
+        plan.signed = signed(&release);
+        let txn = transaction(&plan.policy.root).unwrap();
+        fs::create_dir_all(txn.join("stage/sounds")).unwrap();
+        fs::write(txn.join("stage/sounds/die4.opus"), b"new").unwrap();
+        fs::write(txn.join("plan.json"), serde_json::to_vec(&plan).unwrap()).unwrap();
+        (root, plan)
+    }
+
+    #[test]
+    fn expansion_installs_and_recovers_new_and_existing_files() {
+        for existing in [false, true] {
+            let (_root, plan) = expanding_fixture();
+            let sound = plan.policy.root.join("sounds/die4.opus");
+            fs::write(plan.policy.root.join("app.exe"), b"old").unwrap();
+            if existing {
+                fs::create_dir_all(sound.parent().unwrap()).unwrap();
+                fs::write(&sound, b"previous sound").unwrap();
+            }
+            apply(&plan).unwrap();
+            assert_eq!(fs::read(&sound).unwrap(), b"new");
+            // Exercise durable recovery through the serialized plan and journal.
+            let status = recover_installation(&plan.policy.root).unwrap();
+            assert_eq!(status.state, InstallState::RolledBack);
+            assert_eq!(fs::read(plan.policy.root.join("app.exe")).unwrap(), b"old");
+            if existing {
+                assert_eq!(fs::read(&sound).unwrap(), b"previous sound");
+            } else {
+                assert!(!sound.exists());
+            }
+        }
+    }
+
+    #[test]
+    fn expansion_requires_owned_inventory_and_strict_directory_boundary() {
+        let (_root, plan) = expanding_fixture();
+        for path in ["sounds/die4.opus", "sounds/extra/die.opus"] {
+            let mut artifact = manifest().artifacts.remove(0);
+            let mut extra = artifact.files[0].clone();
+            extra.path = path.into();
+            artifact.files.push(extra);
+            plan.policy.validate(&artifact).unwrap();
+            artifact.files.remove(0);
+            assert!(plan.policy.validate(&artifact).is_err());
+        }
+        for path in [
+            "saves/game.json",
+            "notes.txt",
+            "sounds-extra/die.opus",
+            "sounds",
+            "Sounds/die.opus",
+        ] {
+            let mut artifact = manifest().artifacts.remove(0);
+            let mut extra = artifact.files[0].clone();
+            extra.path = path.into();
+            artifact.files.push(extra);
+            assert!(plan.policy.validate(&artifact).is_err(), "{path}");
+        }
+        let mut policy = plan.policy.clone();
+        if let InstallLayout::Portable { executable, .. } = &mut policy.layout {
+            *executable = "sounds/die4.opus".into();
+        }
+        let (_, artifact) = verify_plan(&plan).unwrap();
+        assert!(policy.validate(&artifact).is_err());
+    }
+
+    #[test]
+    fn expansion_rejects_unsafe_directories() {
+        let (_root, plan) = fixture();
+        for prefix in [
+            "",
+            ".",
+            "..",
+            "sounds/../saves",
+            ".freshen",
+            "sounds/.freshen",
+        ] {
+            let policy = InstallPolicy::portable_expanding(
+                plan.policy.root.clone(),
+                "app.exe".into(),
+                vec!["app.exe".into()],
+                vec![prefix.into()],
+            );
+            assert!(
+                matches!(
+                    policy.validate(&manifest().artifacts[0]),
+                    Err(Error::UnsafePath(_))
+                ),
+                "{prefix}"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_plan_defaults_to_exact_ownership_and_recovers() {
+        let (_root, plan) = fixture();
+        fs::write(plan.policy.root.join("app.exe"), b"old").unwrap();
+        apply(&plan).unwrap();
+        let mut json = serde_json::to_value(&plan).unwrap();
+        json["policy"]["layout"]["Portable"]
+            .as_object_mut()
+            .unwrap()
+            .remove("expandable_directories");
+        let path = transaction(&plan.policy.root).unwrap().join("plan.json");
+        fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+        let loaded = load_plan(&path).unwrap();
+        assert!(
+            matches!(&loaded.policy.layout, InstallLayout::Portable { expandable_directories, .. } if expandable_directories.is_empty())
+        );
+        let mut artifact = manifest().artifacts.remove(0);
+        let mut extra = artifact.files[0].clone();
+        extra.path = "sounds/die4.opus".into();
+        artifact.files.push(extra);
+        assert!(loaded.policy.validate(&artifact).is_err());
+        recover_installation(&plan.policy.root).unwrap();
+        assert_eq!(fs::read(plan.policy.root.join("app.exe")).unwrap(), b"old");
+    }
+
+    #[test]
+    fn expansion_staging_still_requires_signed_bytes_and_inventory() {
+        let (_root, plan) = expanding_fixture();
+        verify_stage(&plan).unwrap();
+        let stage = transaction(&plan.policy.root).unwrap().join("stage");
+        fs::write(stage.join("sounds/die4.opus"), b"bad").unwrap();
+        assert!(matches!(verify_stage(&plan), Err(Error::HashMismatch(_))));
+        assert!(matches!(apply(&plan), Err(Error::HashMismatch(_))));
+        assert!(!plan.policy.root.join("app.exe").exists());
+        fs::write(stage.join("sounds/die4.opus"), b"new").unwrap();
+        fs::write(stage.join("sounds/unsigned.opus"), b"new").unwrap();
+        assert!(matches!(verify_stage(&plan), Err(Error::Invalid(_))));
+    }
+
+    #[test]
+    fn expansion_rollback_rejects_unsigned_touched_paths() {
+        let (_root, plan) = expanding_fixture();
+        apply(&plan).unwrap();
+        let txn = transaction(&plan.policy.root).unwrap();
+        let mut journal = load_journal(&txn).unwrap();
+        journal.touched.push("sounds/unsigned.opus".into());
+        fs::write(plan.policy.root.join("sounds/unsigned.opus"), b"keep").unwrap();
+        assert!(matches!(
+            rollback_inner(&plan, &mut journal),
+            Err(Error::UnsafePath(_))
+        ));
+        assert_eq!(
+            fs::read(plan.policy.root.join("sounds/unsigned.opus")).unwrap(),
+            b"keep"
+        );
     }
 
     #[cfg(unix)]
