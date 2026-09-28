@@ -2,7 +2,10 @@ use crate::{
     Artifact, Error, PackageKind, PreparedUpdate, ReleaseManifest, Result, SignedManifest,
     TrustStore,
     archive::hash_file,
-    fsutil::{atomic_write, checked_join, copy_tree, remove_tree, safe_join, sync_dir},
+    fsutil::{
+        atomic_write, checked_join, copy_tree, hide_state_directory, remove_tree, safe_join,
+        sync_dir,
+    },
     manifest::check_path,
 };
 use fs2::FileExt;
@@ -209,6 +212,7 @@ pub(crate) struct InstallationLock {
 pub(crate) fn lock(root: &Path) -> Result<InstallationLock> {
     let state = checked_join(root, ".freshen")?;
     fs::create_dir_all(&state)?;
+    hide_state_directory(&state);
     let path = checked_join(root, ".freshen/update.lock")?;
     let file = File::options()
         .create(true)
@@ -229,7 +233,9 @@ pub(crate) fn lock(root: &Path) -> Result<InstallationLock> {
 }
 
 pub(crate) fn transaction(root: &Path) -> Result<PathBuf> {
-    checked_join(root, ".freshen/transaction")
+    let txn = checked_join(root, ".freshen/transaction")?;
+    hide_state_directory(txn.parent().unwrap());
+    Ok(txn)
 }
 
 pub(crate) fn load_plan(path: &Path) -> Result<Plan> {

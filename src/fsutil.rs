@@ -129,3 +129,30 @@ pub(crate) fn remove_tree(path: &Path) -> Result<()> {
         Err(error) => Err(error.into()),
     }
 }
+
+/// Cosmetic only: failing to hide internal state must never block recovery.
+pub(crate) fn hide_state_directory(path: &Path) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_REPARSE_POINT,
+            GetFileAttributesW, INVALID_FILE_ATTRIBUTES, SetFileAttributesW,
+        };
+
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: wide is a live, NUL-terminated Windows path for both calls.
+        unsafe {
+            let attributes = GetFileAttributesW(wide.as_ptr());
+            if attributes != INVALID_FILE_ATTRIBUTES
+                && attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+                && attributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_REPARSE_POINT) == 0
+            {
+                // Preserve existing attributes; do not add FILE_ATTRIBUTE_SYSTEM.
+                let _ = SetFileAttributesW(wide.as_ptr(), attributes | FILE_ATTRIBUTE_HIDDEN);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = path;
+}
