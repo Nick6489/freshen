@@ -8,7 +8,7 @@ This is an initial implementation, not yet published to crates.io. Review the [s
 
 ## What it does
 
-- Discovers signed releases from GitHub or manifest/signature URLs.
+- Discovers signed releases from provider-neutral indexes, host-supplied manifest lists, GitHub, or a single manifest/signature URL pair.
 - Authenticates exact manifest bytes with pinned Ed25519 public keys. Signed metadata binds the product, channel, semantic version, target, package hash, and every file's hash and size.
 - Downloads over HTTPS with limits, timeouts, cancellation, and structured progress events.
 - Extracts only declared regular files, rejecting traversal, case collisions, reserved paths, symlinks, reparse points, and unexpected entries.
@@ -18,6 +18,54 @@ This is an initial implementation, not yet published to crates.io. Review the [s
 - Journals replacement intent, retains backups, restores failed updates, and requires the new executable to acknowledge successful startup.
 
 Freshen never opens a dialog, browser, or console window for an update. It does not call `process::exit` inside the library, kill a host application, acquire administrator privileges, or choose when the user should install.
+
+## Release discovery and history
+
+Publish signed manifests anywhere your transport can reach. For provider-neutral discovery,
+use `ReleaseSource::Index { document: index_url }` pointing to a JSON array:
+
+```json
+[
+  {
+    "document": "https://updates.example.com/1.1.0/manifest.json",
+    "signature": "https://updates.example.com/1.1.0/manifest.json.sig"
+  },
+  {
+    "document": "https://updates.example.com/1.2.0/manifest.json",
+    "signature": "https://updates.example.com/1.2.0/manifest.json.sig"
+  }
+]
+```
+
+The index uses absolute URLs and is limited to 1 MiB and 100 entries. It is a flat
+catalog, not a recursive website crawl. Applications with their own discovery or
+crawling mechanism can pass `ReleaseSource::Manifests(Vec<ManifestLocation>)`
+directly. All sources share the same signature checks, selection, and history logic.
+The index itself is not authenticated: it only supplies locations, never trusted
+versions or notes. As with GitHub discovery, withholding releases remains possible.
+The default HTTP transport requires HTTPS; a custom transport can support local sources.
+
+History includes only signed releases matching the configured product, channel,
+and target, newer than the installed version. Versions are sorted oldest first;
+duplicate versions with identical notes appear once, while conflicting notes for
+an applicable version cause an error. Repeated identical location pairs are fetched
+once. Any failed manifest fetch or authentication fails the entire check, including
+failures in older releases; the caller can retry without accepting partial history.
+Only the selected newest package is downloaded during preparation.
+
+History is the available history, not a guarantee of completeness: unpublished
+manifests, filtering, or the discovery limit can leave gaps. A single-manifest
+source supplies at most one history entry. Keep older signed manifests available
+in the index to let users see the changes in skipped versions.
+
+```rust,no_run
+# fn show(candidate: &freshen::Candidate) {
+for release in candidate.release_history() {
+    println!("Version {}", release.version);
+    println!("{}", release.notes);
+}
+# }
+```
 
 ## Integration
 
@@ -55,7 +103,7 @@ fn prepare_update(
 }
 ```
 
-`Candidate::release()` exposes the version and release notes for your interface. Holding a `PreparedUpdate` lets the user defer installation; dropping it deletes its temporary files. Clone a `Cancellation` before dispatching work to cancel it from another thread. Cancellation during a blocked network read is bounded by the request timeout.
+`Candidate::release()` exposes the selected installation version and its own notes. `Candidate::release_history()` exposes available authenticated versions and notes in ascending order, from after the configured current version through the selected release. `PreparedUpdate::release_history()` retains the same history. Applications own headings, formatting, localization, and the fallback for empty notes. Holding a `PreparedUpdate` lets the user defer installation; dropping it deletes its temporary files. Clone a `Cancellation` before dispatching work to cancel it from another thread. Cancellation during a blocked network read is bounded by the request timeout.
 
 After the application decides it can shut down:
 

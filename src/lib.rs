@@ -27,4 +27,6 @@ pub use manifest::{
     Artifact, PackageFile, PackageKind, ReleaseManifest, SignedManifest, TrustStore,
 };
 pub use transport::{Cancellation, Event, HttpTransport, Transport};
-pub use updater::{Candidate, PreparedUpdate, ReleaseSource, Updater};
+pub use updater::{
+    Candidate, ManifestLocation, PreparedUpdate, ReleaseNotes, ReleaseSource, Updater,
+};
