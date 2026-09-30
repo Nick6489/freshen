@@ -72,7 +72,58 @@ enforces the size limit, cancellation and progress inside the native library, so
 transport cannot skip them. Non-HTTPS URLs and URLs with embedded credentials never
 reach it.
 
-## Deploying the native library and helper
+## The NuGet package
+
+The `Freshen` package (`0.1.0-preview.1`, not published anywhere) carries the assembly,
+its XML documentation, and, for every platform it was built for, the native library
+**and** the helper under `runtimes/{rid}/native/`:
+
+```text
+lib/net8.0/Freshen.dll  Freshen.xml
+runtimes/win-x64/native/    freshen_ffi.dll      freshen-helper.exe
+runtimes/linux-x64/native/  libfreshen_ffi.so    freshen-helper
+runtimes/osx-arm64/native/  libfreshen_ffi.dylib freshen-helper      (and linux-arm64, osx-x64)
+```
+
+Reference it and nothing else is needed: the runtime finds the native library on its
+own (no `FRESHEN_FFI_LIBRARY`), and `FreshenHost.FindBundledHelper()` returns the
+packaged helper, whether the build kept the `runtimes/` layout or a RID-specific
+publish flattened it beside the application.
+
+```csharp
+string helper = FreshenHost.FindBundledHelper()
+    ?? throw new InvalidOperationException("The Freshen helper is not deployed.");
+using Handoff handoff = prepared.Arm(policy, helper, new[] { "--restarted" });
+```
+
+NuGet does not preserve the execute permission, so a packaged helper arrives
+non-executable on Linux and macOS. `FindBundledHelper` restores it, or, if the install
+location is read-only, returns an executable copy from a private temporary directory.
+
+**Building the package.** The native pieces come from Rust, so packing is two steps
+(`Tools/pack.sh` does both):
+
+```text
+Tools/stage-native.sh   # cargo build --release, then copy this machine's library + helper
+                        # into bindings/dotnet/runtimes/<rid>/native/
+dotnet pack src/Freshen -c Release -o artifacts
+```
+
+A complete package needs every platform, and one machine can only build its own, so
+`.github/workflows/nuget.yml` (run by hand) builds each platform, gathers them, packs
+with `-p:FreshenRequiredRuntimes="linux-x64;linux-arm64;win-x64;osx-arm64;osx-x64"`, and
+verifies the result. Packing with **no** natives, or with a required platform missing,
+fails rather than producing a package that cannot load. `Tools/verify-package.sh` then
+inspects the archive and consumes it from a scratch application that references it from
+a local-only feed, checking that the native library loads and the helper is found.
+Build the Linux libraries on the oldest OS you support, since a library built on a very
+recent distribution needs a newer glibc.
+
+Only the Linux x64 package has been built and verified so far. Nothing is published to
+nuget.org; do that deliberately, and rename the package if `Freshen` is not the ID you
+want.
+
+## Deploying without the package
 
 - **Native library.** Put `freshen_ffi.dll` / `libfreshen_ffi.so` /
   `libfreshen_ffi.dylib` where the runtime probes (beside the application, or
@@ -81,8 +132,9 @@ reach it.
 - **Helper.** Freshen copies an executable into the transaction and runs it while
   your application is gone, so it must be self-contained. Ship the
   `freshen-helper` binary for each target beside your application and pass its
-  path to `Arm`. A .NET apphost is not a suitable helper on its own because it
-  needs its managed assemblies. `FreshenHost.RunHelper(args)` exists for an
+  path to `Arm` (the package does this for you). A .NET apphost is not a suitable
+  helper on its own because it needs its managed assemblies.
+  `FreshenHost.RunHelper(args)` exists for an
   application that is a single self-contained executable (single-file or Native
   AOT publish): call it first in `Main`, before any UI or single-instance lock.
 - **Owned files.** The `InstallPolicy` must list every file your application owns.

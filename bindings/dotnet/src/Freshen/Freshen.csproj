@@ -3,11 +3,52 @@
   <PropertyGroup>
     <AssemblyName>Freshen</AssemblyName>
     <RootNamespace>Freshen</RootNamespace>
-    <Version>0.1.0</Version>
-    <Description>Authenticated desktop application updates for .NET, over the freshen C ABI.</Description>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsAotCompatible>true</IsAotCompatible>
-    <IsPackable>false</IsPackable>
   </PropertyGroup>
+
+  <!-- Package metadata. Nothing is published from here; see ../../README.md. -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Freshen</PackageId>
+    <Version>0.1.0-preview.1</Version>
+    <Authors>Freshen contributors</Authors>
+    <Description>Authenticated desktop application updates for .NET: signed manifests, bounded extraction, a helper-driven install with journaled rollback. A binding over the freshen native library.</Description>
+    <PackageTags>update;updater;desktop;auto-update;ed25519;signed</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/Nick6489/freshen</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <!-- The package only makes sense with native libraries. Tools/stage-native.sh stages them
+         as <this directory>/<rid>/native/<files>, mirroring the package's runtimes/ layout. -->
+    <FreshenNativeDirectory Condition="'$(FreshenNativeDirectory)' == ''">$(MSBuildThisFileDirectory)..\..\runtimes</FreshenNativeDirectory>
+    <!-- Semicolon-separated runtime identifiers that MUST be present, for example
+         "win-x64;linux-x64;osx-arm64;osx-x64". Empty (the default) requires at least one. -->
+    <FreshenRequiredRuntimes Condition="'$(FreshenRequiredRuntimes)' == ''"></FreshenRequiredRuntimes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
+    <!-- <rid>/native/<files>  ->  runtimes/<rid>/native/<files>. The runtime probes there, and
+         freshen-helper travels with the library so hosts can find it next to the app. NuGet
+         appends each file's path relative to the wildcard root, so the target is just runtimes\. -->
+    <None Include="$(FreshenNativeDirectory)\**\*" Pack="true" PackagePath="runtimes\" Visible="false" />
+  </ItemGroup>
+
+  <Target Name="FreshenCheckNativeAssets" BeforeTargets="_GetPackageFiles;GenerateNuspec" Condition="'$(IsPackable)' == 'true'">
+    <ItemGroup>
+      <_FreshenNativeFile Include="$(FreshenNativeDirectory)\**\*" />
+      <_FreshenRequiredRid Include="$(FreshenRequiredRuntimes)" />
+    </ItemGroup>
+    <Error Condition="'@(_FreshenNativeFile)' == ''"
+           Text="No native libraries were found under $(FreshenNativeDirectory). Run Tools/stage-native.sh (or let CI stage every platform) before packing: a package without them cannot load." />
+    <Error Condition="'@(_FreshenRequiredRid)' != '' and !Exists('$(FreshenNativeDirectory)\%(_FreshenRequiredRid.Identity)')"
+           Text="Required runtime '%(_FreshenRequiredRid.Identity)' has no native files under $(FreshenNativeDirectory)." />
+    <Message Importance="high" Text="Packing native assets from $(FreshenNativeDirectory)" />
+  </Target>
 
 </Project>
