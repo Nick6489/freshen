@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Freshen</AssemblyName>
+    <RootNamespace>Freshen</RootNamespace>
+    <Version>0.1.0</Version>
+    <Description>Authenticated desktop application updates for .NET, over the freshen C ABI.</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>
