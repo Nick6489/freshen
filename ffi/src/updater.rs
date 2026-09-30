@@ -156,7 +156,11 @@ pub unsafe extern "C" fn freshen_updater_new(
     run(|| {
         unsafe { store(out_updater, ptr::null_mut(), "out_updater") }?;
         let config = unsafe { handle(config, "config") }?;
-        check_size(config.struct_size, size_of::<FreshenUpdaterConfig>(), "config")?;
+        check_size(
+            config.struct_size,
+            size_of::<FreshenUpdaterConfig>(),
+            "config",
+        )?;
         let current_version = unsafe { cstr(config.current_version, "config.current_version") }?
             .parse()
             .map_err(|error| invalid(&format!("config.current_version is not semver: {error}")))?;
@@ -164,7 +168,10 @@ pub unsafe extern "C" fn freshen_updater_new(
             return Err(invalid("at least one trusted public key is required"));
         }
         let key_bytes = unsafe {
-            slice::from_raw_parts(config.trusted_keys, config.trusted_key_count.saturating_mul(32))
+            slice::from_raw_parts(
+                config.trusted_keys,
+                config.trusted_key_count.saturating_mul(32),
+            )
         };
         let keys: Vec<[u8; 32]> = key_bytes
             .chunks_exact(32)
@@ -179,11 +186,16 @@ pub unsafe extern "C" fn freshen_updater_new(
                     config.http_timeout_secs
                 };
                 FfiTransport::Http(
-                    HttpTransport::new(Duration::from_secs(seconds)).map_err(|error| fail(&error))?,
+                    HttpTransport::new(Duration::from_secs(seconds))
+                        .map_err(|error| fail(&error))?,
                 )
             }
             Some(custom) => {
-                check_size(custom.struct_size, size_of::<FreshenTransport>(), "transport")?;
+                check_size(
+                    custom.struct_size,
+                    size_of::<FreshenTransport>(),
+                    "transport",
+                )?;
                 let download = custom
                     .download
                     .ok_or_else(|| invalid("transport.download must not be null"))?;
@@ -363,9 +375,9 @@ fn version_text(release: &ReleaseManifest) -> *mut c_char {
 }
 
 fn history_version(history: &[ReleaseNotes], index: usize) -> *mut c_char {
-    history
-        .get(index)
-        .map_or(ptr::null_mut(), |entry| to_c_string(&entry.version.to_string()))
+    history.get(index).map_or(ptr::null_mut(), |entry| {
+        to_c_string(&entry.version.to_string())
+    })
 }
 
 fn history_notes(history: &[ReleaseNotes], index: usize) -> *mut c_char {
@@ -437,8 +449,9 @@ pub unsafe extern "C" fn freshen_candidate_history_version(
     index: usize,
 ) -> *mut c_char {
     guard(ptr::null_mut(), || {
-        unsafe { candidate.as_ref() }
-            .map_or(ptr::null_mut(), |c| history_version(c.0.release_history(), index))
+        unsafe { candidate.as_ref() }.map_or(ptr::null_mut(), |c| {
+            history_version(c.0.release_history(), index)
+        })
     })
 }
 
@@ -453,8 +466,9 @@ pub unsafe extern "C" fn freshen_candidate_history_notes(
     index: usize,
 ) -> *mut c_char {
     guard(ptr::null_mut(), || {
-        unsafe { candidate.as_ref() }
-            .map_or(ptr::null_mut(), |c| history_notes(c.0.release_history(), index))
+        unsafe { candidate.as_ref() }.map_or(ptr::null_mut(), |c| {
+            history_notes(c.0.release_history(), index)
+        })
     })
 }
 
@@ -521,8 +535,9 @@ pub unsafe extern "C" fn freshen_prepared_history_version(
     index: usize,
 ) -> *mut c_char {
     guard(ptr::null_mut(), || {
-        prepared_release(prepared)
-            .map_or(ptr::null_mut(), |p| history_version(p.release_history(), index))
+        prepared_release(prepared).map_or(ptr::null_mut(), |p| {
+            history_version(p.release_history(), index)
+        })
     })
 }
 
@@ -536,8 +551,9 @@ pub unsafe extern "C" fn freshen_prepared_history_notes(
     index: usize,
 ) -> *mut c_char {
     guard(ptr::null_mut(), || {
-        prepared_release(prepared)
-            .map_or(ptr::null_mut(), |p| history_notes(p.release_history(), index))
+        prepared_release(prepared).map_or(ptr::null_mut(), |p| {
+            history_notes(p.release_history(), index)
+        })
     })
 }
 

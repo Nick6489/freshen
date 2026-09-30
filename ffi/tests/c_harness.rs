@@ -32,17 +32,30 @@ fn library_dir() -> PathBuf {
         .args(["build", "-p", "freshen-ffi", "--target-dir"])
         .arg(&target_dir)
         .current_dir(env!("CARGO_MANIFEST_DIR"));
-    if profile_dir.file_name().is_some_and(|name| name == "release") {
+    if profile_dir
+        .file_name()
+        .is_some_and(|name| name == "release")
+    {
         build.arg("--release");
     }
-    assert!(build.status().unwrap().success(), "building freshen-ffi failed");
+    assert!(
+        build.status().unwrap().success(),
+        "building freshen-ffi failed"
+    );
     profile_dir
 }
 
 fn compile_harness(library: &Path, output: &Path) {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let status = Command::new(env::var("CC").unwrap_or_else(|_| "cc".into()))
-        .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-O1"])
+        .args([
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-pedantic",
+            "-O1",
+        ])
         .arg("-I")
         .arg(manifest.join("include"))
         .arg(manifest.join("tests/c/harness.c"))
@@ -54,7 +67,10 @@ fn compile_harness(library: &Path, output: &Path) {
         .arg(output)
         .status()
         .expect("a C compiler is required for the C ABI tests");
-    assert!(status.success(), "harness.c failed to compile against include/freshen.h");
+    assert!(
+        status.success(),
+        "harness.c failed to compile against include/freshen.h"
+    );
 }
 
 fn manifest(version: &str, notes: &str, package: &[u8], application: &[u8]) -> Vec<u8> {
@@ -202,7 +218,10 @@ fn c_abi_conformance_and_process_scenarios() {
         }
         assert_eq!(fs::read(root.join("user-settings")).unwrap(), b"keep me");
         if mode == "success" {
-            assert_ne!(fs::read(root.join("application")).unwrap(), b"old application");
+            assert_ne!(
+                fs::read(root.join("application")).unwrap(),
+                b"old application"
+            );
         } else {
             assert_eq!(
                 fs::read(root.join("application")).unwrap(),
