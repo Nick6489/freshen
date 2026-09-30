@@ -45,6 +45,10 @@ jobs:
         run: dotnet format bindings/dotnet/Freshen.sln --verify-no-changes --no-restore
       - name: Build and test the .NET binding
         run: dotnet test bindings/dotnet/Freshen.sln --no-restore
+      - name: Pack and verify the NuGet package (Linux natives only)
+        run: |
+          sh bindings/dotnet/Tools/pack.sh
+          sh bindings/dotnet/Tools/verify-package.sh bindings/dotnet/artifacts/Freshen.*.nupkg
 
   objc-syntax:
     # Language-level check only (ARC, blocks, nullability) against a stub Foundation;
