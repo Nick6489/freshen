@@ -142,4 +142,6 @@ The Qt test skips itself when cmake or the Qt 6 development files are missing, u
 ## Status
 
 Verified on Linux with g++ 15 and clang++ 21, and Qt 6.10. **Not yet built with MSVC or on
-Windows or macOS**; the header uses only standard C++17, but treat those as untested.
+Windows or macOS**; the header uses only standard C++17, but treat those as untested. The
+test program uses POSIX APIs (`mkdir`, `sleep`, `dirent`), so the C++ tests are Unix-only
+until they are ported.

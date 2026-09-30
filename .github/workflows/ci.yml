@@ -29,7 +29,17 @@ jobs:
         run: cargo +stable package --locked -p freshen
 
   dotnet:
-    runs-on: ubuntu-latest
+    # Linux has run locally. The Windows leg has never run: it is where the .NET binding is
+    # actually verified for Windows, so expect to fix whatever it finds.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # Git Bash on Windows, so the same shell scripts run everywhere.
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -42,10 +52,12 @@ jobs:
       - name: Restore
         run: dotnet restore bindings/dotnet/Freshen.sln
       - name: Format
+        # Line endings differ on Windows checkouts, so format is checked once, on Linux.
+        if: runner.os == 'Linux'
         run: dotnet format bindings/dotnet/Freshen.sln --verify-no-changes --no-restore
       - name: Build and test the .NET binding
         run: dotnet test bindings/dotnet/Freshen.sln --no-restore
-      - name: Pack and verify the NuGet package (Linux natives only)
+      - name: Pack and verify the NuGet package (this platform's natives only)
         run: |
           sh bindings/dotnet/Tools/pack.sh
           sh bindings/dotnet/Tools/verify-package.sh bindings/dotnet/artifacts/Freshen.*.nupkg

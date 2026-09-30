@@ -56,16 +56,50 @@ and sanitized. The higher-level C++ wrapper, `bindings/cpp/include/freshen/fresh
 is tested by `tests/cpp_wrapper.rs` (including a real Qt 6 program); see
 `bindings/cpp/README.md`.
 
-These tests are Unix-only for now. `tests/header.rs` runs everywhere and fails if
-`include/freshen.h` no longer matches the source:
+`tests/boundary.rs` feeds the exported functions garbage: null for every pointer,
+invalid UTF-8, undersized structs and unknown enums, absurd counts and lengths, extreme
+numbers, a hostile transport, misused handles, the helper entry point with junk
+arguments, corrupt state on disk, and 3,200 seeded random call steps. Every call must
+return a defined status with a message: no crash, no hang, and no `FRESHEN_ERR_PANIC`
+(the caught-panic code, which would mean bad input reached an `unwrap` or an overflow).
+It found that the library trusted a few caller-supplied counts enough to read past the
+caller's buffer before checking them; those are now refused first, and the limits are
+documented on the struct fields. What no C API can detect (a non-null pointer that lies, a
+count that overstates a real buffer, a double free, using a sink after its callback
+returned) remains the caller's contract.
+
+The C and C++ harness tests are Unix-only for now. `tests/boundary.rs` and
+`tests/header.rs` run everywhere; `tests/header.rs` fails if `include/freshen.h` no
+longer matches the source:
 
 ```text
 FRESHEN_UPDATE_HEADER=1 cargo test -p freshen-ffi --test header
 ```
 
+## Windows
+
+`cargo build -p freshen-ffi` produces `freshen_ffi.dll` with its import library
+(`freshen_ffi.dll.lib` on MSVC), and a static `freshen_ffi.lib`.
+
+- **Dynamic:** include `freshen.h`, link the import library, and ship the DLL beside the
+  executable (or use the .NET package, which does this for you).
+- **Static:** also link the system libraries the Rust code needs. Ask cargo for the exact
+  list with `cargo rustc -p freshen-ffi --release --crate-type staticlib -- --print
+  native-static-libs`.
+- **Strings are UTF-8**, including paths, which are converted for the OS. A path with
+  unpaired UTF-16 surrogates cannot be expressed. For `freshen_run_helper`, pass arguments
+  as UTF-8: take them from `wmain`'s wide `argv` (or `CommandLineToArgvW`) and convert, since
+  the ANSI `main` receives them in the active code page and mangles non-ASCII text.
+- **The installed executable must have an extension** (`.exe`): Windows cannot launch a file
+  without one, and the helper restarts the application by path. A running executable also
+  cannot be replaced, which is what the helper is for: it waits for the process to exit.
+
+Not yet verified on Windows. The CI matrix runs the Rust suite (including the boundary
+tests) and the .NET suite there, but none of it has run; the C and C++ tests use POSIX
+APIs and are Unix-only, and `freshen.hpp` has not been built with MSVC.
+
 ## Not yet covered
 
 `shared::publish` / `shared::inspect` (synchronized installs) and the
-`freshen-release` publisher tool are not exposed. Windows and macOS are built by
-CI but the C harness does not run there yet; macOS application-bundle
-installation in particular needs a signed bundle and is checked manually.
+`freshen-release` publisher tool are not exposed. macOS application-bundle
+installation needs a signed bundle and is checked manually.

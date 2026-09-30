@@ -161,5 +161,9 @@ example programs with cargo, generates signed fixtures, and runs:
 A Native AOT publish of the end-to-end parent (`-r linux-x64 -p:PublishAot=true`)
 was also run against a real update and installed it.
 
-Requires the .NET 8 SDK and a Rust toolchain. Tests currently run on Linux only;
-Windows and macOS are untested.
+Requires the .NET 8 SDK and a Rust toolchain. Verified on Linux. The CI matrix also runs the
+suite on Windows, but **that leg has never run**, so expect it to find things. The tests
+are written to be portable: the fixtures record the installed application's name in an
+`appname` file, and it is `application.exe` on Windows, which cannot launch a file without
+an extension. Windows is the important platform for this binding, so treat a green Windows
+CI run as the real verification. macOS is untested.
