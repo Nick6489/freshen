@@ -39,8 +39,22 @@ allow plain HTTP.
 against the generated header and the real shared library. `tests/c_harness.rs`
 builds signed fixtures and runs it through in-process ABI checks and the same
 parent / helper / restarted-application scenarios as `tests/helper_process.rs`
-(commit, cancel, failed-startup rollback, unconfirmed timeout, busy lock). The
-harness is Unix-only for now; `tests/header.rs` runs everywhere and fails if
+(commit, cancel, failed-startup rollback, unconfirmed timeout, busy lock).
+
+The same scenarios run a second time with the C side built under AddressSanitizer
+and UndefinedBehaviorSanitizer with leak detection on, which catches memory misuse
+across the C/Rust boundary: use after free, double free, wrong-allocator frees,
+leaks, out-of-bounds access and undefined behavior in the C code. (Only the C side
+is instrumented; the Rust library is not. A test skips itself on toolchains that
+cannot run sanitized programs.)
+
+`tests/cpp/consumer.cpp` is a C++ consumer, the way a Qt or Win32 application would
+write one, with RAII owners for every handle type. `tests/cpp_header.rs` checks the
+generated header compiles as C++11, C++14, C++17 and C++20 under `-Wall -Wextra
+-Werror -pedantic`, then builds and runs the consumer against signed fixtures, plain
+and sanitized.
+
+These tests are Unix-only for now. `tests/header.rs` runs everywhere and fails if
 `include/freshen.h` no longer matches the source:
 
 ```text
