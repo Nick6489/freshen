@@ -52,7 +52,9 @@ cannot run sanitized programs.)
 write one, with RAII owners for every handle type. `tests/cpp_header.rs` checks the
 generated header compiles as C++11, C++14, C++17 and C++20 under `-Wall -Wextra
 -Werror -pedantic`, then builds and runs the consumer against signed fixtures, plain
-and sanitized.
+and sanitized. The higher-level C++ wrapper, `bindings/cpp/include/freshen/freshen.hpp`,
+is tested by `tests/cpp_wrapper.rs` (including a real Qt 6 program); see
+`bindings/cpp/README.md`.
 
 These tests are Unix-only for now. `tests/header.rs` runs everywhere and fails if
 `include/freshen.h` no longer matches the source:
