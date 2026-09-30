@@ -196,10 +196,8 @@ pub unsafe extern "C" fn freshen_updater_new(
         }
         let key_bytes =
             unsafe { slice::from_raw_parts(config.trusted_keys, config.trusted_key_count * 32) };
-        let keys: Vec<[u8; 32]> = key_bytes
-            .chunks_exact(32)
-            .map(|chunk| <[u8; 32]>::try_from(chunk).expect("chunks_exact yields 32 bytes"))
-            .collect();
+        // The buffer is exactly count * 32 bytes, so there is no remainder.
+        let keys: Vec<[u8; 32]> = key_bytes.as_chunks::<32>().0.to_vec();
         let trust = TrustStore::new(keys).map_err(|error| fail(&error))?;
         let transport = match unsafe { config.transport.as_ref() } {
             None => {
