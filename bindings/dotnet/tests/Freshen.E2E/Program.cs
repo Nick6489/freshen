@@ -26,6 +26,8 @@ if (args.Length != 4)
 }
 
 string fixtures = args[0], root = args[1], mode = args[2], helper = args[3];
+// The installed file name is recorded beside the fixtures (Windows needs a ".exe").
+string appName = File.ReadAllText(Path.Combine(fixtures, "appname"));
 
 static void Require(bool condition, string what)
 {
@@ -55,7 +57,7 @@ string work = Path.Combine(fixtures, "work");
 Directory.CreateDirectory(work);
 using PreparedUpdate prepared = updater.Prepare(candidate, work);
 
-InstallPolicy policy = InstallPolicy.Portable(root, "application", new[] { "application" });
+InstallPolicy policy = InstallPolicy.Portable(root, appName, new[] { appName });
 policy.ConfirmationTimeout = mode == "timeout" ? TimeSpan.FromSeconds(1) : TimeSpan.FromSeconds(30);
 
 using Handoff handoff = prepared.Arm(policy, helper, new[] { mode, root });
@@ -63,7 +65,7 @@ Require(handoff.HelperProcessId > 0, "helper pid");
 
 // While the helper waits for this process to exit, nothing has changed.
 Thread.Sleep(200);
-Require(File.ReadAllText(Path.Combine(root, "application")) == "old application", "application untouched before exit");
+Require(File.ReadAllText(Path.Combine(root, appName)) == "old application", "application untouched before exit");
 
 if (mode == "busy")
 {

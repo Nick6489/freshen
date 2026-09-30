@@ -183,7 +183,7 @@ public sealed class UpdaterTests
         Assert.All(downloading, e => Assert.Equal(candidate.DownloadSize, e.TotalBytes));
         Assert.Equal(candidate.DownloadSize, downloading.Max(e => e.BytesReceived));
         Assert.Contains(events, e => e.Kind == UpdateProgressKind.Verifying);
-        Assert.Contains(events, e => e is { Kind: UpdateProgressKind.Extracting, Path: "application" });
+        Assert.Contains(events, e => e.Kind == UpdateProgressKind.Extracting && e.Path == _rust.AppName);
         Assert.Equal(UpdateProgressKind.Ready, events[^1].Kind);
         Assert.Single(Directory.GetFileSystemEntries(work));
 
@@ -244,7 +244,7 @@ public sealed class UpdaterTests
         using var updater = new Updater(Options(NewTransport()));
         using Candidate candidate = updater.Check(Index)!;
         using PreparedUpdate prepared = updater.Prepare(candidate, work);
-        var missingRoot = InstallPolicy.Portable(Path.Combine(work, "does-not-exist"), "application", new[] { "application" });
+        var missingRoot = InstallPolicy.Portable(Path.Combine(work, "does-not-exist"), _rust.AppName, new[] { _rust.AppName });
 
         Assert.Throws<FreshenException>(() => prepared.Arm(missingRoot, _rust.HelperPath));
 
@@ -259,13 +259,13 @@ public sealed class UpdaterTests
         using var updater = new Updater(Options(NewTransport()));
         using Candidate candidate = updater.Check(Index)!;
         using PreparedUpdate prepared = updater.Prepare(candidate, work);
-        var tooLong = InstallPolicy.Portable(root, "application", new[] { "application" });
+        var tooLong = InstallPolicy.Portable(root, _rust.AppName, new[] { _rust.AppName });
         tooLong.ExitTimeout = TimeSpan.FromHours(2);
 
         Assert.Throws<ArgumentOutOfRangeException>(() => prepared.Arm(tooLong, _rust.HelperPath));
 
         // Still armable: the failed validation did not burn the prepared update.
-        var valid = InstallPolicy.Portable(root, "application", new[] { "application" });
+        var valid = InstallPolicy.Portable(root, _rust.AppName, new[] { _rust.AppName });
         using Handoff handoff = prepared.Arm(valid, _rust.HelperPath, new[] { "success", root });
         Assert.True(handoff.HelperProcessId > 0);
         handoff.Cancel();

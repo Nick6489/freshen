@@ -15,7 +15,6 @@
 //!
 //! Tests run in a debug build, so arithmetic overflow panics and would surface as a
 //! `FRESHEN_ERR_PANIC`.
-#![cfg(unix)]
 
 mod support;
 

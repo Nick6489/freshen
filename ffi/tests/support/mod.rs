@@ -55,7 +55,22 @@ pub fn library_dir() -> PathBuf {
     profile_dir
 }
 
-pub fn manifest(version: &str, notes: &str, package: &[u8], application: &[u8]) -> Vec<u8> {
+/// The name the packaged application is installed under. Windows cannot launch a file
+/// without an extension, so a Windows test that restarts the installed application must
+/// use a name ending in `.exe`; everywhere else the plain name is used.
+pub const APPLICATION_NAME: &str = if cfg!(windows) {
+    "application.exe"
+} else {
+    "application"
+};
+
+pub fn manifest(
+    version: &str,
+    notes: &str,
+    package: &[u8],
+    application: &[u8],
+    name: &str,
+) -> Vec<u8> {
     let document = ReleaseManifest {
         schema: 1,
         product: "ffi-test".into(),
@@ -69,7 +84,7 @@ pub fn manifest(version: &str, notes: &str, package: &[u8], application: &[u8]) 
             sha256: hex::encode(Sha256::digest(package)),
             size: package.len() as u64,
             files: vec![PackageFile {
-                path: "application".into(),
+                path: name.into(),
                 sha256: hex::encode(Sha256::digest(application)),
                 size: application.len() as u64,
                 executable: true,
@@ -88,12 +103,20 @@ pub fn sign(document: &[u8]) -> String {
 }
 
 /// Writes every fixture a test transport serves. `application` is the file
-/// packaged as the new version's executable.
+/// packaged as the new version's executable, named [`APPLICATION_NAME`].
 pub fn write_fixtures(dir: &Path, application: &[u8]) {
+    write_fixtures_named(dir, application, APPLICATION_NAME);
+}
+
+/// Like [`write_fixtures`] with an explicit installed file name. The name is also written
+/// to a small `appname` file so a test program that only has the fixtures directory (a
+/// separate process, in another language) can find out what it is.
+pub fn write_fixtures_named(dir: &Path, application: &[u8], name: &str) {
+    fs::write(dir.join("appname"), name).unwrap();
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     writer
         .start_file(
-            "application",
+            name,
             zip::write::SimpleFileOptions::default().unix_permissions(0o755),
         )
         .unwrap();
@@ -102,7 +125,7 @@ pub fn write_fixtures(dir: &Path, application: &[u8]) {
     fs::write(dir.join("package.zip"), &package).unwrap();
 
     for (version, notes) in [("1.5.0", "notes one"), ("2.0.0", "notes two")] {
-        let document = manifest(version, notes, &package, application);
+        let document = manifest(version, notes, &package, application, name);
         fs::write(dir.join(format!("v{version}.sig")), sign(&document)).unwrap();
         fs::write(dir.join(format!("v{version}.manifest")), document).unwrap();
     }

@@ -18,11 +18,16 @@ set -eu
 
 package=${1:?usage: verify-package.sh path/to/Freshen.<version>.nupkg}
 dotnet=${DOTNET:-dotnet}
+if [ -z "${PYTHON:-}" ]; then
+  if command -v python3 >/dev/null 2>&1; then PYTHON=python3; else PYTHON=python; fi
+fi
 package=$(cd "$(dirname "$package")" && pwd)/$(basename "$package")
-feed=$(dirname "$package")
+# In Git Bash on Windows, `pwd` gives an MSYS path (/d/a/...) that a native dotnet cannot use
+# inside a NuGet.config file, so ask for the Windows form there (`pwd -W`).
+feed=$(cd "$(dirname "$package")" && { pwd -W 2>/dev/null || pwd; })
 
 echo "== inspecting $(basename "$package")"
-python3 - "$package" <<'PY'
+"$PYTHON" - "$package" <<'PY'
 import re, sys, zipfile
 
 path = sys.argv[1]
@@ -60,7 +65,7 @@ if problems:
 print("archive contents ok")
 PY
 
-version=$(python3 - "$package" <<'PY'
+version=$("$PYTHON" - "$package" <<'PY'
 import re, sys, zipfile
 z = zipfile.ZipFile(sys.argv[1])
 n = next(x for x in z.namelist() if x.endswith(".nuspec"))
@@ -81,7 +86,7 @@ case "$(uname -m)" in
 esac
 rid=${FRESHEN_RID:-$os-$arch}
 
-if ! python3 - "$package" "$rid" <<'PY'
+if ! "$PYTHON" - "$package" "$rid" <<'PY'
 import sys, zipfile
 names = zipfile.ZipFile(sys.argv[1]).namelist()
 sys.exit(0 if any(n.startswith(f"runtimes/{sys.argv[2]}/native/") for n in names) else 1)

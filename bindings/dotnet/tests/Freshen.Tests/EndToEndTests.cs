@@ -32,7 +32,7 @@ public sealed class EndToEndTests
         string scenario = _rust.NewScratchDirectory("e2e-" + mode);
         string root = Path.Combine(scenario, "installation");
         Directory.CreateDirectory(root);
-        File.WriteAllText(Path.Combine(root, "application"), "old application");
+        File.WriteAllText(Path.Combine(root, _rust.AppName), "old application");
         File.WriteAllText(Path.Combine(root, "user-settings"), "keep me");
 
         RunParent(root, mode);
@@ -55,7 +55,7 @@ public sealed class EndToEndTests
         }
 
         Assert.Equal("keep me", File.ReadAllText(Path.Combine(root, "user-settings")));
-        byte[] application = File.ReadAllBytes(Path.Combine(root, "application"));
+        byte[] application = File.ReadAllBytes(Path.Combine(root, _rust.AppName));
         if (mode == "success")
         {
             Assert.Equal(File.ReadAllBytes(_rust.ConfirmAppPath), application);

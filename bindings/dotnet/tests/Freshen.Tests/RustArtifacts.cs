@@ -42,6 +42,10 @@ public sealed class RustArtifacts : IDisposable
 
     public string RepoRoot { get; }
 
+    /// <summary>The name the packaged application is installed under: <c>application</c>, or
+    /// <c>application.exe</c> on Windows, which cannot launch a file without an extension.</summary>
+    public string AppName => File.ReadAllText(Path.Combine(FixturesDirectory, "appname"));
+
     public string LibraryPath { get; }
 
     public string HelperPath { get; }
@@ -78,9 +82,10 @@ public sealed class RustArtifacts : IDisposable
         {
             Directory.Delete(_scratch, recursive: true);
         }
-        catch (IOException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            // A helper process may briefly hold a file; the OS temp cleaner will get it.
+            // A helper process may briefly hold a file (Windows refuses to delete an open one);
+            // the OS temp cleaner will get it.
         }
     }
 
