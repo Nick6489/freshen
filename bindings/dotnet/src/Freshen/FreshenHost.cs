@@ -17,6 +17,23 @@ public static unsafe class FreshenHost
         Marshal.PtrToStringUTF8((nint)NativeMethods.freshen_library_version()) ?? string.Empty;
 
     /// <summary>
+    /// Finds the <c>freshen-helper</c> executable that the NuGet package ships for this platform,
+    /// looking beside the application and under <c>runtimes/{rid}/native</c>. Pass the result
+    /// to <see cref="PreparedUpdate.Arm"/>. On Linux and macOS, where NuGet drops the execute
+    /// permission, it is restored (or a private executable copy is returned).
+    /// </summary>
+    /// <returns>The path, or <see langword="null"/> when no packaged helper is present, for
+    /// example when the application supplies its own helper.</returns>
+    public static string? FindBundledHelper() => BundledHelper.Find(AppContext.BaseDirectory);
+
+    /// <summary>Like <see cref="FindBundledHelper()"/> but searches <paramref name="searchDirectory"/> instead of the application directory.</summary>
+    public static string? FindBundledHelper(string searchDirectory)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(searchDirectory);
+        return BundledHelper.Find(searchDirectory);
+    }
+
+    /// <summary>
     /// Self-helper dispatch. When the application executable doubles as the update helper,
     /// call this first in <c>Main</c>, before any UI or single-instance lock, passing the
     /// command-line arguments (which exclude the program name in .NET).
