@@ -45,3 +45,25 @@ jobs:
         run: dotnet format bindings/dotnet/Freshen.sln --verify-no-changes --no-restore
       - name: Build and test the .NET binding
         run: dotnet test bindings/dotnet/Freshen.sln --no-restore
+
+  objc-syntax:
+    # Language-level check only (ARC, blocks, nullability) against a stub Foundation;
+    # it needs no Apple SDK. The real build and tests are the `objc` job below.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax-check the Objective-C binding
+        run: sh bindings/objc/Tools/check-syntax.sh
+
+  objc:
+    # Builds and runs the Objective-C binding for real. It has never been run on a
+    # Mac yet, so a failure here is informative rather than blocking; remove
+    # continue-on-error once it has passed.
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Build and test the Objective-C binding
+        run: sh bindings/objc/Tools/run-tests.sh
