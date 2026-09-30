@@ -12,6 +12,11 @@
  * Driven by tests/c_harness.rs, which builds the signed fixtures. Any failed
  * check prints the location and the last freshen error, then exits nonzero.
  */
+#if defined(__APPLE__)
+/* Apple's SDK hides some POSIX.1-2008 functions, including mkdtemp, unless the full Darwin
+ * feature set is enabled alongside _POSIX_C_SOURCE. Found by the first real macOS build. */
+#define _DARWIN_C_SOURCE
+#endif
 #define _POSIX_C_SOURCE 200809L
 #include "freshen.h"
 
