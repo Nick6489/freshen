@@ -29,6 +29,14 @@ pub struct FreshenCandidate(Candidate);
 pub struct FreshenPrepared(pub(crate) Option<PreparedUpdate>);
 
 const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 300;
+/// Cancelling a blocked read is bounded by this timeout, so an absurd value would make a
+/// stalled download uncancellable in practice.
+const MAX_HTTP_TIMEOUT_SECS: u64 = 24 * 60 * 60;
+/// The core library accepts 1 to 32 publisher keys (a handful during a rotation). A larger
+/// count is refused before the buffer is read.
+const MAX_TRUSTED_KEYS: usize = 32;
+/// The library accepts at most this many manifest locations.
+const MAX_MANIFEST_LOCATIONS: usize = 100;
 
 /// Updater settings. Set `struct_size` to `sizeof(FreshenUpdaterConfig)`.
 #[repr(C)]
@@ -44,13 +52,15 @@ pub struct FreshenUpdaterConfig {
     pub target: *const c_char,
     /// `trusted_key_count` pinned Ed25519 public keys, 32 bytes each, back to back.
     pub trusted_keys: *const u8,
+    /// Number of keys, from 1 to 32. A larger count is refused before the buffer is read.
     pub trusted_key_count: usize,
     /// Largest package download accepted, in bytes.
     pub max_download: u64,
     /// Largest total unpacked size accepted, in bytes.
     pub max_unpacked: u64,
-    /// Built-in HTTPS transport total timeout; 0 selects 300 seconds. Ignored
-    /// when `transport` is set.
+    /// Built-in HTTPS transport total timeout in seconds; 0 selects 300 seconds, and the
+    /// maximum is 86400 (one day). Cancelling a blocked read is bounded by this timeout.
+    /// Ignored when `transport` is set.
     pub http_timeout_secs: u64,
     /// Optional custom transport, copied during creation. Null selects HTTPS.
     pub transport: *const FreshenTransport,
@@ -80,6 +90,8 @@ pub struct FreshenSource {
     pub a: *const c_char,
     pub b: *const c_char,
     pub locations: *const FreshenLocation,
+    /// Number of `locations`, at most 100. A larger count fails with
+    /// `FRESHEN_ERR_SIZE_LIMIT` before the array is read.
     pub location_count: usize,
 }
 
@@ -115,6 +127,14 @@ unsafe fn build_source(source: *const FreshenSource) -> Result<ReleaseSource, i3
             repository: unsafe { cstr(source.b, "source.b") }?.to_owned(),
         }),
         FRESHEN_SOURCE_MANIFESTS => {
+            if source.location_count > MAX_MANIFEST_LOCATIONS {
+                // Checked first, so a corrupt count never makes us read that far.
+                crate::error::set_message(&format!(
+                    "source lists {} manifest locations; at most {MAX_MANIFEST_LOCATIONS} are supported",
+                    source.location_count
+                ));
+                return Err(crate::error::FRESHEN_ERR_SIZE_LIMIT);
+            }
             if source.location_count > 0 && source.locations.is_null() {
                 return Err(invalid("source.locations must not be null"));
             }
@@ -167,12 +187,15 @@ pub unsafe extern "C" fn freshen_updater_new(
         if config.trusted_key_count == 0 || config.trusted_keys.is_null() {
             return Err(invalid("at least one trusted public key is required"));
         }
-        let key_bytes = unsafe {
-            slice::from_raw_parts(
-                config.trusted_keys,
-                config.trusted_key_count.saturating_mul(32),
-            )
-        };
+        if config.trusted_key_count > MAX_TRUSTED_KEYS {
+            // Checked before the buffer is read, so a corrupt count cannot run off the end.
+            return Err(invalid(&format!(
+                "config.trusted_key_count is {}; at most {MAX_TRUSTED_KEYS} keys are supported",
+                config.trusted_key_count
+            )));
+        }
+        let key_bytes =
+            unsafe { slice::from_raw_parts(config.trusted_keys, config.trusted_key_count * 32) };
         let keys: Vec<[u8; 32]> = key_bytes
             .chunks_exact(32)
             .map(|chunk| <[u8; 32]>::try_from(chunk).expect("chunks_exact yields 32 bytes"))
@@ -180,6 +203,12 @@ pub unsafe extern "C" fn freshen_updater_new(
         let trust = TrustStore::new(keys).map_err(|error| fail(&error))?;
         let transport = match unsafe { config.transport.as_ref() } {
             None => {
+                if config.http_timeout_secs > MAX_HTTP_TIMEOUT_SECS {
+                    return Err(invalid(&format!(
+                        "config.http_timeout_secs is {}; the maximum is {MAX_HTTP_TIMEOUT_SECS}",
+                        config.http_timeout_secs
+                    )));
+                }
                 let seconds = if config.http_timeout_secs == 0 {
                     DEFAULT_HTTP_TIMEOUT_SECS
                 } else {

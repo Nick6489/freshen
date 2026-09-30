@@ -246,6 +246,11 @@ pub unsafe extern "C" fn freshen_sink_write(
         if len > 0 && data.is_null() {
             return Err(invalid("data must not be null when len is nonzero"));
         }
+        if len > isize::MAX as usize {
+            // No allocation can be this large, so the length is corrupt; a slice this long
+            // is not even representable.
+            return Err(invalid("len is larger than any buffer can be"));
+        }
         let bytes: &[u8] = if len == 0 {
             &[]
         } else {

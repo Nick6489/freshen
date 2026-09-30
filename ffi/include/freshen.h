@@ -201,13 +201,15 @@ typedef struct FreshenUpdaterConfig {
   const char *target;
   // `trusted_key_count` pinned Ed25519 public keys, 32 bytes each, back to back.
   const uint8_t *trusted_keys;
+  // Number of keys, from 1 to 32. A larger count is refused before the buffer is read.
   size_t trusted_key_count;
   // Largest package download accepted, in bytes.
   uint64_t max_download;
   // Largest total unpacked size accepted, in bytes.
   uint64_t max_unpacked;
-  // Built-in HTTPS transport total timeout; 0 selects 300 seconds. Ignored
-  // when `transport` is set.
+  // Built-in HTTPS transport total timeout in seconds; 0 selects 300 seconds, and the
+  // maximum is 86400 (one day). Cancelling a blocked read is bounded by this timeout.
+  // Ignored when `transport` is set.
   uint64_t http_timeout_secs;
   // Optional custom transport, copied during creation. Null selects HTTPS.
   const struct FreshenTransport *transport;
@@ -226,6 +228,8 @@ typedef struct FreshenSource {
   const char *a;
   const char *b;
   const struct FreshenLocation *locations;
+  // Number of `locations`, at most 100. A larger count fails with
+  // `FRESHEN_ERR_SIZE_LIMIT` before the array is read.
   size_t location_count;
 } FreshenSource;
 

@@ -16,6 +16,11 @@ pub(crate) unsafe fn cstr<'a>(pointer: *const c_char, name: &str) -> Result<&'a 
         .map_err(|_| invalid(&format!("{name} must be valid UTF-8")))
 }
 
+/// The most entries a caller-supplied list may claim. Real lists (owned files, arguments)
+/// hold a handful; a count beyond this is a corrupt or uninitialized value, and is refused
+/// before any of the array is read.
+pub(crate) const MAX_LIST_ITEMS: usize = 1 << 20;
+
 /// Copy `count` required strings out of a C array.
 pub(crate) unsafe fn cstr_list(
     pointer: *const *const c_char,
@@ -24,6 +29,11 @@ pub(crate) unsafe fn cstr_list(
 ) -> Result<Vec<String>, i32> {
     if count == 0 {
         return Ok(Vec::new());
+    }
+    if count > MAX_LIST_ITEMS {
+        return Err(invalid(&format!(
+            "{name} claims {count} entries, more than the {MAX_LIST_ITEMS} allowed"
+        )));
     }
     if pointer.is_null() {
         return Err(invalid(&format!(
