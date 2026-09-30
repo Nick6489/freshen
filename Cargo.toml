@@ -8,6 +8,9 @@ license = "MIT"
 repository = "https://github.com/Nick6489/freshen"
 readme = "README.md"
 
+[workspace]
+members = ["ffi"]
+
 [dependencies]
 base64 = "0.22"
 ed25519-dalek = "2.2"
