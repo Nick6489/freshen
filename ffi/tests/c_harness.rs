@@ -13,16 +13,7 @@
 
 mod support;
 
-use freshen::{
-    Error, InstallState, discard_finished_installation, installation_status, recover_installation,
-};
-use std::{
-    env, fs,
-    path::Path,
-    process::Command,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{env, fs, path::Path, process::Command};
 
 const SANITIZER_FLAGS: [&str; 4] = [
     "-fsanitize=address,undefined",
@@ -81,108 +72,13 @@ fn sanitizers_available(scratch: &Path) -> bool {
             .is_ok_and(|status| status.success())
 }
 
-/// Runs the in-process checks and every update scenario with `harness` as parent,
-/// helper and restarted application. `environment` is passed to every process.
-fn exercise(harness: &Path, scratch: &Path, environment: &[(&str, &str)]) {
-    let fixtures = scratch.join("fixtures");
-    fs::create_dir(&fixtures).unwrap();
-    support::write_fixtures(&fixtures, &fs::read(harness).unwrap());
-
-    let output = Command::new(harness)
-        .arg("selftest")
-        .arg(&fixtures)
-        .envs(environment.iter().copied())
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "selftest failed:\n{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    for mode in ["success", "cancel", "fail", "timeout", "busy"] {
-        let scenario = tempfile::tempdir_in(scratch).unwrap();
-        let root = scenario.path().join("installation");
-        fs::create_dir(&root).unwrap();
-        fs::write(root.join("application"), b"old application").unwrap();
-        fs::write(root.join("user-settings"), b"keep me").unwrap();
-        let output = Command::new(harness)
-            .arg("parent")
-            .arg(&fixtures)
-            .arg(&root)
-            .arg(mode)
-            .arg(harness)
-            .envs(environment.iter().copied())
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{mode}: parent failed:\n{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let expected = match mode {
-            "success" => InstallState::Committed,
-            "cancel" | "busy" => InstallState::Prepared,
-            "fail" => InstallState::RolledBack,
-            _ => InstallState::Failed,
-        };
-        let deadline = Instant::now() + Duration::from_secs(120);
-        loop {
-            let status = installation_status(&root).unwrap().unwrap();
-            if status.state == expected {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "{mode}: timed out with {status:?}; {:?}",
-                fs::read_to_string(root.join(".freshen/transaction/helper-error.txt"))
-            );
-            thread::sleep(Duration::from_millis(100));
-        }
-        if mode == "timeout" {
-            // An unconfirmed but running process is left alone; wait for the
-            // fixture to exit, then recovery must roll back.
-            thread::sleep(Duration::from_secs(3));
-            assert_eq!(
-                recover_installation(&root).unwrap().state,
-                InstallState::RolledBack
-            );
-        }
-        assert_eq!(fs::read(root.join("user-settings")).unwrap(), b"keep me");
-        if mode == "success" {
-            assert_ne!(
-                fs::read(root.join("application")).unwrap(),
-                b"old application"
-            );
-        } else {
-            assert_eq!(
-                fs::read(root.join("application")).unwrap(),
-                b"old application",
-                "{mode}: the old application must be intact"
-            );
-        }
-        // A committed status may be observed just before the helper drops its lock.
-        loop {
-            match discard_finished_installation(&root) {
-                Ok(()) => break,
-                Err(Error::Busy) if Instant::now() < deadline => {
-                    thread::sleep(Duration::from_millis(100))
-                }
-                result => panic!("{mode}: cleanup failed: {result:?}"),
-            }
-        }
-    }
-}
-
 #[test]
 fn c_abi_conformance_and_process_scenarios() {
     let library = support::library_dir();
     let temp = tempfile::tempdir().unwrap();
     let harness = temp.path().join("harness");
     compile_harness(&library, &harness, &[]);
-    exercise(&harness, temp.path(), &[]);
+    support::exercise(&harness, temp.path(), &[]);
 }
 
 #[test]
@@ -198,7 +94,7 @@ fn c_abi_under_address_and_undefined_behavior_sanitizers() {
     // Any sanitizer report aborts the process with a nonzero status, which fails
     // the scenario. Leak detection is on, so a leak in either the C harness or the
     // library through the API is a failure too.
-    exercise(
+    support::exercise(
         &harness,
         temp.path(),
         &[
