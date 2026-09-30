@@ -16,13 +16,39 @@ use ed25519_dalek::{Signer, SigningKey};
 use freshen::{Artifact, PackageFile, PackageKind, ReleaseManifest, signing_message};
 use sha2::{Digest, Sha256};
 use std::{
-    fs,
+    env, fs,
     io::{Cursor, Write},
-    path::Path,
+    path::{Path, PathBuf},
+    process::Command,
 };
 
 /// Seed of the fixture signing key. Test-only; never used for real releases.
 pub const KEY_SEED: [u8; 32] = [7; 32];
+
+/// Builds the freshen-ffi library with cargo (a no-op when it is current) and returns
+/// the profile directory that holds `libfreshen_ffi.*`. Call it from an integration
+/// test: it derives the target directory and profile from the test executable's path.
+pub fn library_dir() -> PathBuf {
+    let exe = env::current_exe().unwrap();
+    let profile_dir = exe.parent().unwrap().parent().unwrap().to_owned();
+    let target_dir = profile_dir.parent().unwrap().to_owned();
+    let mut build = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    build
+        .args(["build", "-p", "freshen-ffi", "--target-dir"])
+        .arg(&target_dir)
+        .current_dir(env!("CARGO_MANIFEST_DIR"));
+    if profile_dir
+        .file_name()
+        .is_some_and(|name| name == "release")
+    {
+        build.arg("--release");
+    }
+    assert!(
+        build.status().unwrap().success(),
+        "building freshen-ffi failed"
+    );
+    profile_dir
+}
 
 pub fn manifest(version: &str, notes: &str, package: &[u8], application: &[u8]) -> Vec<u8> {
     let document = ReleaseManifest {

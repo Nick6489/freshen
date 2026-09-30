@@ -3,6 +3,12 @@
 //! parent / helper / restarted-application scenarios as `tests/helper_process.rs`
 //! (commit, cancel, failed startup rollback, unconfirmed timeout, busy lock) --
 //! but driven entirely through the C ABI.
+//!
+//! The same scenarios run a second time with the C side built under AddressSanitizer
+//! and UndefinedBehaviorSanitizer, which catches memory misuse across the C/Rust
+//! boundary: use after free, double free, freeing memory with the wrong allocator,
+//! leaks, out-of-bounds reads of the structs and buffers the API hands out, and
+//! undefined behavior in the C code.
 #![cfg(unix)]
 
 mod support;
@@ -12,37 +18,26 @@ use freshen::{
 };
 use std::{
     env, fs,
-    path::{Path, PathBuf},
+    path::Path,
     process::Command,
     thread,
     time::{Duration, Instant},
 };
 
-fn library_dir() -> PathBuf {
-    let exe = env::current_exe().unwrap();
-    let profile_dir = exe.parent().unwrap().parent().unwrap().to_owned();
-    let target_dir = profile_dir.parent().unwrap().to_owned();
-    let mut build = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
-    build
-        .args(["build", "-p", "freshen-ffi", "--target-dir"])
-        .arg(&target_dir)
-        .current_dir(env!("CARGO_MANIFEST_DIR"));
-    if profile_dir
-        .file_name()
-        .is_some_and(|name| name == "release")
-    {
-        build.arg("--release");
-    }
-    assert!(
-        build.status().unwrap().success(),
-        "building freshen-ffi failed"
-    );
-    profile_dir
+const SANITIZER_FLAGS: [&str; 4] = [
+    "-fsanitize=address,undefined",
+    "-fno-sanitize-recover=undefined",
+    "-fno-omit-frame-pointer",
+    "-g",
+];
+
+fn cc() -> String {
+    env::var("CC").unwrap_or_else(|_| "cc".into())
 }
 
-fn compile_harness(library: &Path, output: &Path) {
+fn compile_harness(library: &Path, output: &Path, extra_flags: &[&str]) {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let status = Command::new(env::var("CC").unwrap_or_else(|_| "cc".into()))
+    let status = Command::new(cc())
         .args([
             "-std=c11",
             "-Wall",
@@ -51,6 +46,7 @@ fn compile_harness(library: &Path, output: &Path) {
             "-pedantic",
             "-O1",
         ])
+        .args(extra_flags)
         .arg("-I")
         .arg(manifest.join("include"))
         .arg(manifest.join("tests/c/harness.c"))
@@ -68,19 +64,34 @@ fn compile_harness(library: &Path, output: &Path) {
     );
 }
 
-#[test]
-fn c_abi_conformance_and_process_scenarios() {
-    let library = library_dir();
-    let temp = tempfile::tempdir().unwrap();
-    let harness = temp.path().join("harness");
-    compile_harness(&library, &harness);
-    let fixtures = temp.path().join("fixtures");
-    fs::create_dir(&fixtures).unwrap();
-    support::write_fixtures(&fixtures, &fs::read(&harness).unwrap());
+/// Whether this toolchain can build and run a sanitized program at all.
+fn sanitizers_available(scratch: &Path) -> bool {
+    let source = scratch.join("probe.c");
+    let program = scratch.join("probe");
+    fs::write(&source, "int main(void) { return 0; }\n").unwrap();
+    Command::new(cc())
+        .args(SANITIZER_FLAGS)
+        .arg(&source)
+        .arg("-o")
+        .arg(&program)
+        .status()
+        .is_ok_and(|status| status.success())
+        && Command::new(&program)
+            .status()
+            .is_ok_and(|status| status.success())
+}
 
-    let output = Command::new(&harness)
+/// Runs the in-process checks and every update scenario with `harness` as parent,
+/// helper and restarted application. `environment` is passed to every process.
+fn exercise(harness: &Path, scratch: &Path, environment: &[(&str, &str)]) {
+    let fixtures = scratch.join("fixtures");
+    fs::create_dir(&fixtures).unwrap();
+    support::write_fixtures(&fixtures, &fs::read(harness).unwrap());
+
+    let output = Command::new(harness)
         .arg("selftest")
         .arg(&fixtures)
+        .envs(environment.iter().copied())
         .output()
         .unwrap();
     assert!(
@@ -91,17 +102,18 @@ fn c_abi_conformance_and_process_scenarios() {
     );
 
     for mode in ["success", "cancel", "fail", "timeout", "busy"] {
-        let scenario = tempfile::tempdir_in(temp.path()).unwrap();
+        let scenario = tempfile::tempdir_in(scratch).unwrap();
         let root = scenario.path().join("installation");
         fs::create_dir(&root).unwrap();
         fs::write(root.join("application"), b"old application").unwrap();
         fs::write(root.join("user-settings"), b"keep me").unwrap();
-        let output = Command::new(&harness)
+        let output = Command::new(harness)
             .arg("parent")
             .arg(&fixtures)
             .arg(&root)
             .arg(mode)
-            .arg(&harness)
+            .arg(harness)
+            .envs(environment.iter().copied())
             .output()
             .unwrap();
         assert!(
@@ -116,7 +128,7 @@ fn c_abi_conformance_and_process_scenarios() {
             "fail" => InstallState::RolledBack,
             _ => InstallState::Failed,
         };
-        let deadline = Instant::now() + Duration::from_secs(60);
+        let deadline = Instant::now() + Duration::from_secs(120);
         loop {
             let status = installation_status(&root).unwrap().unwrap();
             if status.state == expected {
@@ -162,4 +174,39 @@ fn c_abi_conformance_and_process_scenarios() {
             }
         }
     }
+}
+
+#[test]
+fn c_abi_conformance_and_process_scenarios() {
+    let library = support::library_dir();
+    let temp = tempfile::tempdir().unwrap();
+    let harness = temp.path().join("harness");
+    compile_harness(&library, &harness, &[]);
+    exercise(&harness, temp.path(), &[]);
+}
+
+#[test]
+fn c_abi_under_address_and_undefined_behavior_sanitizers() {
+    let library = support::library_dir();
+    let temp = tempfile::tempdir().unwrap();
+    if !sanitizers_available(temp.path()) {
+        eprintln!("skipped: this C toolchain cannot build and run sanitized programs");
+        return;
+    }
+    let harness = temp.path().join("harness-sanitized");
+    compile_harness(&library, &harness, &SANITIZER_FLAGS);
+    // Any sanitizer report aborts the process with a nonzero status, which fails
+    // the scenario. Leak detection is on, so a leak in either the C harness or the
+    // library through the API is a failure too.
+    exercise(
+        &harness,
+        temp.path(),
+        &[
+            (
+                "ASAN_OPTIONS",
+                "detect_leaks=1:halt_on_error=1:abort_on_error=0:strict_string_checks=1:detect_stack_use_after_return=1",
+            ),
+            ("UBSAN_OPTIONS", "print_stacktrace=1:halt_on_error=1"),
+        ],
+    );
 }
