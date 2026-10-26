@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace Freshen.Tests;
@@ -116,8 +117,13 @@ public sealed class RustArtifacts : IDisposable
             RedirectStandardError = true,
         };
         using Process process = Process.Start(info)!;
-        string output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+        // Drain both pipes at once. Reading one to the end before the other deadlocks when the
+        // child fills the unread pipe's buffer, which cargo does on a cold build (progress goes
+        // to stderr).
+        Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderr = process.StandardError.ReadToEndAsync();
         process.WaitForExit();
+        string output = stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult();
         Assert.True(process.ExitCode == 0, $"{file} {arguments} failed ({process.ExitCode}):\n{output}");
     }
 }

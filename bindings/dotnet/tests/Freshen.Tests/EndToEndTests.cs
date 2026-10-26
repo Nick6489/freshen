@@ -96,8 +96,11 @@ public sealed class EndToEndTests
         start.ArgumentList.Add(_rust.HelperPath);
 
         using Process parent = Process.Start(start)!;
-        string output = parent.StandardOutput.ReadToEnd() + parent.StandardError.ReadToEnd();
+        // Drain both pipes at once; see RustArtifacts.Run.
+        var stdout = parent.StandardOutput.ReadToEndAsync();
+        var stderr = parent.StandardError.ReadToEndAsync();
         parent.WaitForExit();
+        string output = stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult();
         Assert.True(parent.ExitCode == 0, $"{mode}: the parent application failed ({parent.ExitCode}):\n{output}");
     }
 
