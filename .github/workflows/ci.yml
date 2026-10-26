@@ -36,6 +36,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # A hung test must fail the job with a diagnosis instead of occupying a runner for hours.
+    timeout-minutes: 30
     defaults:
       run:
         # Git Bash on Windows, so the same shell scripts run everywhere.
@@ -56,7 +58,7 @@ jobs:
         if: runner.os == 'Linux'
         run: dotnet format bindings/dotnet/Freshen.sln --verify-no-changes --no-restore
       - name: Build and test the .NET binding
-        run: dotnet test bindings/dotnet/Freshen.sln --no-restore
+        run: dotnet test bindings/dotnet/Freshen.sln --no-restore --logger "console;verbosity=normal" --blame-hang --blame-hang-timeout 10m --blame-hang-dump-type none
       - name: Pack and verify the NuGet package (this platform's natives only)
         run: |
           sh bindings/dotnet/Tools/pack.sh
