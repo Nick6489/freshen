@@ -25,7 +25,7 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <!-- The package only makes sense with native libraries. Tools/stage-native.sh stages them
          as <this directory>/<rid>/native/<files>, mirroring the package's runtimes/ layout. -->
-    <FreshenNativeDirectory Condition="'$(FreshenNativeDirectory)' == ''">$(MSBuildThisFileDirectory)..\..\runtimes</FreshenNativeDirectory>
+    <FreshenNativeDirectory Condition="'$(FreshenNativeDirectory)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\runtimes'))</FreshenNativeDirectory>
     <!-- Semicolon-separated runtime identifiers that MUST be present, for example
          "win-x64;linux-x64;osx-arm64;osx-x64". Empty (the default) requires at least one. -->
     <FreshenRequiredRuntimes Condition="'$(FreshenRequiredRuntimes)' == ''"></FreshenRequiredRuntimes>
@@ -35,8 +35,8 @@
     <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
     <!-- <rid>/native/<files>  ->  runtimes/<rid>/native/<files>. The runtime probes there, and
          freshen-helper travels with the library so hosts can find it next to the app. NuGet
-         appends each file's path relative to the wildcard root, so the target is just runtimes\. -->
-    <None Include="$(FreshenNativeDirectory)\**\*" Pack="true" PackagePath="runtimes\" Visible="false" />
+         appends each file's path relative to the wildcard root, so the target is just runtimes, with no trailing separator: a trailing one yields runtimes//<rid> in the archive on some paths. -->
+    <None Include="$(FreshenNativeDirectory)\**\*" Pack="true" PackagePath="runtimes" Visible="false" />
   </ItemGroup>
 
   <Target Name="FreshenCheckNativeAssets" BeforeTargets="_GetPackageFiles;GenerateNuspec" Condition="'$(IsPackable)' == 'true'">

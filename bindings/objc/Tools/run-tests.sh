@@ -14,6 +14,9 @@ if [ "$(uname)" != "Darwin" ]; then
   exit 1
 fi
 
+# Match Package.swift's platform floor so Rust objects and Swift link without version warnings.
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
+
 root=$(cd "$(dirname "$0")/../../.." && pwd)
 objc="$root/bindings/objc"
 host=$(rustc -vV | sed -n 's/^host: //p')

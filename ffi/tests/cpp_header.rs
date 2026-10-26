@@ -81,7 +81,12 @@ fn run_consumer(standard: &str, sanitized: bool) {
     if sanitized {
         run.env(
             "ASAN_OPTIONS",
-            "detect_leaks=1:halt_on_error=1:abort_on_error=0",
+            // LeakSanitizer only exists on Linux; macOS ASan refuses detect_leaks.
+            if cfg!(target_os = "linux") {
+                "detect_leaks=1:halt_on_error=1:abort_on_error=0"
+            } else {
+                "halt_on_error=1:abort_on_error=0"
+            },
         )
         .env("UBSAN_OPTIONS", "print_stacktrace=1:halt_on_error=1");
     }

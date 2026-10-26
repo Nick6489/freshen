@@ -54,6 +54,9 @@ rids = sorted({n.split("/")[1] for n in names if n.startswith("runtimes/") and n
 if not rids:
     problems.append("no runtimes/<rid>/native content: the package cannot load")
 for rid in rids:
+    if rid.split("-")[0] not in expected:
+        problems.append(f"unexpected runtime directory {rid!r} in: " + ", ".join(n for n in names if n.startswith("runtimes/")))
+        continue
     library, helper = expected[rid.split("-")[0]]
     for wanted in (library, helper):
         if f"runtimes/{rid}/native/{wanted}" not in names:

@@ -369,7 +369,21 @@
     FSHFixtureTransport *transport = [self newTransport];
     dispatch_semaphore_t entered = dispatch_semaphore_create(0);
     dispatch_semaphore_t release = dispatch_semaphore_create(0);
+    // A check makes several transport calls; only the first parks, or the single release below
+    // would leave the second one blocked forever.
+    // (Not a semaphore used as a one-shot flag: libdispatch traps if one is freed below its
+    // initial value.)
+    dispatch_queue_t flagQueue = dispatch_queue_create("freshen.test.first-call", NULL);  // NULL = serial
+    __block BOOL parked = NO;
     transport.beforeDownload = ^{
+        __block BOOL first = NO;
+        dispatch_sync(flagQueue, ^{
+            first = !parked;
+            parked = YES;
+        });
+        if (!first) {
+            return;
+        }
         dispatch_semaphore_signal(entered);
         dispatch_semaphore_wait(release, DISPATCH_TIME_FOREVER);
     };

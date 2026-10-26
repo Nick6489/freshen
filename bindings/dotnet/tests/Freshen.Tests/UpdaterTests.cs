@@ -54,7 +54,8 @@ public sealed class UpdaterTests
         Target = "test-target",
         TrustedKeys = new[] { File.ReadAllBytes(Path.Combine(_rust.FixturesDirectory, "pubkey")) },
         MaxDownloadBytes = maxDownload,
-        MaxUnpackedBytes = 64UL * 1024 * 1024,
+        // The debug test application is ~57 MB on Linux and larger on Windows.
+        MaxUnpackedBytes = 512UL * 1024 * 1024,
         Transport = transport,
     };
 
