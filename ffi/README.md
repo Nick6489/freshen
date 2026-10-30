@@ -94,12 +94,17 @@ FRESHEN_UPDATE_HEADER=1 cargo test -p freshen-ffi --test header
   without one, and the helper restarts the application by path. A running executable also
   cannot be replaced, which is what the helper is for: it waits for the process to exit.
 
-Not yet verified on Windows. The CI matrix runs the Rust suite (including the boundary
-tests) and the .NET suite there, but none of it has run; the C and C++ tests use POSIX
-APIs and are Unix-only, and `freshen.hpp` has not been built with MSVC.
+Windows CI has passed the Rust suite (including ABI boundary tests), the .NET
+suite, and single-platform NuGet pack/consume checks. The C and C++ harnesses use
+POSIX APIs and remain Unix-only; `freshen.hpp` has no MSVC consumer test. A green
+Rust job on Windows does not establish C/C++ consumer coverage there.
 
 ## Not yet covered
 
 `shared::publish` / `shared::inspect` (synchronized installs) and the
 `freshen-release` publisher tool are not exposed. macOS application-bundle
 installation needs a signed bundle and is checked manually.
+
+See [testing and integration](../TESTING.md) for the coverage matrix, application
+acceptance checks, and deferred review findings, including the status-output error
+path leak.

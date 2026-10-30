@@ -108,7 +108,7 @@ public:
 would: a `QObject` owns the `Updater` and exposes the flow as signals; blocking calls run on
 Qt's thread pool through `QtConcurrent::run`; progress and results are emitted from the worker
 and, because the `QObject` lives on the GUI thread, Qt queues them so slots run there; and the
-GUI thread cancels a download in flight. It is built with CMake against Qt 6.10 and is run by
+GUI thread cancels a download in flight. It is built with CMake against Qt 6 and is run by
 the Rust test suite. Include Qt's headers before `freshen.hpp` if you like: they coexist with
 Qt's `signals`/`slots`/`emit` macros.
 
@@ -141,7 +141,13 @@ The Qt test skips itself when cmake or the Qt 6 development files are missing, u
 
 ## Status
 
-Verified on Linux with g++ 15 and clang++ 21, and Qt 6.10. **Not yet built with MSVC or on
-Windows or macOS**; the header uses only standard C++17, but treat those as untested. The
-test program uses POSIX APIs (`mkdir`, `sleep`, `dirent`), so the C++ tests are Unix-only
-until they are ported.
+The Unix C++ harnesses run in the Linux and macOS Rust CI jobs. A separate Linux
+job requires the Qt 6 integration test instead of allowing it to skip. Earlier
+development checks used g++ 15, clang++ 21 and Qt 6.10; CI installs the Qt version
+available on its runner rather than pinning 6.10.
+
+Windows/MSVC consumer builds remain untested: the harnesses use POSIX APIs
+(`mkdir`, `sleep`, `dirent`) and are excluded on Windows. Build and exercise your
+shipping compiler, linkage and application lifecycle before deployment. See
+[testing and integration](../../TESTING.md) for the coverage matrix and application
+acceptance checklist.

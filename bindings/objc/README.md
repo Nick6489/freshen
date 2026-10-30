@@ -6,13 +6,12 @@ the helper process and rollback all run in the native library. This layer gives
 Objective-C hosts ordinary classes, `NSError` reporting, blocks and safe handle
 management.
 
-> **Status: written and syntax-checked, not yet built or run on macOS.**
-> The sources, tests and scripts were produced on a Linux machine with no Apple SDK.
-> They pass a strict ARC/blocks/nullability syntax check against a stub Foundation
-> (`Tools/check-syntax.sh`), and the C ABI underneath is exercised by the C, .NET and
-> Rust tests. But nobody has compiled this against real Foundation or run its tests.
-> Run `Tools/run-tests.sh` on a Mac before relying on it, and treat the first run as
-> the real verification. See [What is and is not verified](#what-is-and-is-not-verified).
+> **Status: macOS debug tests have passed; production integration review is deferred.**
+> CI has built the binding against the real Apple toolchain and run its portable
+> installation tests. This is not validation of an optimized shipping application
+> or a signed bundle update. The Objective-C CI job remains nonblocking. Review the
+> outstanding marshaling-buffer lifetime concern before production use; see
+> [testing and integration](../../TESTING.md#deferred-review-findings).
 
 ## Flow
 
@@ -149,7 +148,7 @@ These mirror the Rust, C and .NET tests.
 
 ## What is and is not verified
 
-Verified on Linux, where this was written:
+Automated coverage:
 
 - `Tools/check-syntax.sh` compiles every source and test file with `-fobjc-arc
   -fblocks -Wall -Wextra -Werror -Wconversion -Wnullable-to-nonnull-conversion` and
@@ -157,13 +156,16 @@ Verified on Linux, where this was written:
   issues while writing (nullable `NSURL` results passed to nonnull parameters, and
   `uint64_t` boxing that differs between platforms), and it rejects a deliberately
   broken file (an ARC bridging error).
-- Every C ABI call this layer makes is covered by the Rust, C and .NET suites, including
-  the size-limit, cancellation, consume-on-arm and helper scenarios.
+- The macOS job has passed a real XCFramework/SwiftPM build and debug tests against
+  Foundation and libdispatch, including portable helper commit and rollback scenarios.
+- The underlying C ABI also has Rust, C and .NET tests for size limits,
+  cancellation, consume-on-arm and helper scenarios.
 
-Not verified, because it needs a Mac:
+Still requires validation:
 
-- compilation against real Foundation and libdispatch, and any use of Foundation
-  that the stub cannot check (selectors, runtime behavior);
-- the SwiftPM manifest, the XCFramework build and the system libraries the static
-  library needs;
-- running the tests, and everything about a real signed, notarized bundle update.
+- optimized ARC behavior and marshaling-buffer lifetime review; current tests use
+  debug builds and do not resolve the outstanding lifetime concern;
+- your shipping architectures, Xcode/Swift consumer, UI dispatch and app lifecycle;
+- a real Developer ID-signed, notarized bundle update and its failure recovery.
+
+See the [application acceptance checklist](../../TESTING.md#validation-with-your-application).

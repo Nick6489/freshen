@@ -6,6 +6,20 @@ Freshen is a Rust library for authenticated desktop application updates **withou
 
 This is an initial implementation, not yet published to crates.io. Review the [support boundaries](#support-boundaries) before integrating it into a shipped application.
 
+## Language bindings
+
+Use the Rust API directly, or use the optional [C ABI](ffi/README.md),
+[C# / .NET binding](bindings/dotnet/README.md),
+[Objective-C binding for macOS and Swift](bindings/objc/README.md), or
+[C++17 wrapper](bindings/cpp/README.md). The core crate has no dependency on the
+bindings or a GUI toolkit. Each host still owns scheduling, UI dispatch, prompts,
+saving work, shutdown, and startup confirmation.
+
+The [testing and integration guide](TESTING.md) separates automated library and
+binding coverage from validation with your actual packaged application. It also
+records platform gaps and deferred review findings, including Objective-C lifetime
+review before production use.
+
 ## What it does
 
 - Discovers signed releases from provider-neutral indexes, host-supplied manifest lists, GitHub, or a single manifest/signature URL pair.
@@ -201,13 +215,16 @@ For other hosting, use `ReleaseSource::Manifest`. A custom `Transport` supports 
 
 ```text
 cargo fmt --all -- --check
-cargo clippy --all-targets --locked -- -D warnings
-cargo test --all-targets --locked
-cargo test --doc --locked
-cargo package --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --all-targets --locked
+cargo test --workspace --doc --locked
+cargo package --locked -p freshen
 ```
 
 CI runs these checks on Windows, Linux, and macOS. Tests cover authentication, archive rejection, preservation, rollback, interrupted-state recovery, and actual helper processes, including cancellation, startup failure, and confirmation timeout. A successful Developer ID-signed macOS bundle update additionally requires a real signed release and credentials unavailable in generic CI.
+
+See [testing and integration](TESTING.md) for binding-specific commands, the CI
+coverage matrix, known limitations, and the application acceptance checklist.
 
 Every implementation increment is committed with an explanation of what changed and why. Publishing to crates.io is a separate release decision.
 
