@@ -13,6 +13,7 @@ freshen-release pack DIRECTORY ZIP URL TARGET files|mac_bundle|inno PRODUCT VERS
 freshen-release merge OUTPUT_MANIFEST INPUT_MANIFEST...\n\
 freshen-release sign PRIVATE_KEY MANIFEST SIGNATURE\n\n\
 freshen-release recover INSTALLATION_ROOT\n\n\
+freshen-release discard-finished INSTALLATION_ROOT\n\n\
 Keys and signatures use base64. Keep the private key outside your repository.\n\
 Pack writes a ZIP and a single-target manifest. Merge combines target manifests\n\
 for the same release before signing. Publish freshen-manifest.json and\n\
@@ -30,6 +31,10 @@ fn main() -> std::process::ExitCode {
 
 fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     match args.first().map(String::as_str) {
+        Some("discard-finished") if args.len() == 2 => {
+            freshen::discard_finished_installation(Path::new(&args[1]))?;
+            println!("Discarded the finished transaction; installation files were not changed.");
+        }
         Some("recover") if args.len() == 2 => {
             let status = freshen::recover_installation(Path::new(&args[1]))?;
             println!("{:?}: {}", status.state, status.detail);

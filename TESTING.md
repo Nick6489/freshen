@@ -1,5 +1,10 @@
 # Testing and application integration
 
+The [native Windows dialog test app](native-test-app/README.md) provides a
+buildable Petzold-style GUI and version-1/version-2 Inno 7 installers. Its normal
+workspace test checks resource dialogs and dialog-manager keyboard behavior;
+its opt-in installed-app test checks the real surviving progress UI and update.
+
 Inno servicing has a separate [architecture, ABI and test guide](docs/inno.md)
 and [reproducible reference-app rebuild procedure](docs/reference-app-inno.md).
 Run `inno/build-bridge.ps1`, set `FRESHEN_ISCC` to Inno 6 or 7's `ISCC.exe`, then run

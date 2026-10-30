@@ -8,6 +8,11 @@ This is an initial implementation, not yet published to crates.io. Review the [s
 
 ## Language bindings
 
+A disposable [native Windows UI test app](native-test-app/README.md) builds
+Petzold-style resource dialogs, Inno 7 installers for versions 1 and 2, and a
+signed local update feed. It includes standalone dialog checks and an opt-in
+installed-app update test; the external reference application remains separate.
+
 Use the Rust API directly, or use the optional [C ABI](ffi/README.md),
 [C# / .NET binding](bindings/dotnet/README.md),
 [Objective-C binding for macOS and Swift](bindings/objc/README.md), or
