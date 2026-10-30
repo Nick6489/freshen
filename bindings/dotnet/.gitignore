@@ -1,0 +1,6 @@
+bin/
+obj/
+*.user
+# staged by Tools/stage-native.sh and built by Tools/pack.sh
+/runtimes/
+/artifacts/

@@ -7,6 +7,11 @@ description = "GUI-independent authenticated desktop application updates"
 license = "MIT"
 repository = "https://github.com/Nick6489/freshen"
 readme = "README.md"
+# Language bindings live beside the crate but are not part of it.
+exclude = ["/bindings"]
+
+[workspace]
+members = ["ffi"]
 
 [dependencies]
 base64 = "0.22"

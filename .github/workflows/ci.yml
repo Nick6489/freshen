@@ -20,10 +20,83 @@ jobs:
       - name: Format
         run: cargo +stable fmt --all -- --check
       - name: Lint
-        run: cargo +stable clippy --all-targets --locked -- -D warnings
-      - name: Unit and process integration tests
-        run: cargo +stable test --all-targets --locked
+        run: cargo +stable clippy --workspace --all-targets --locked -- -D warnings
+      - name: Unit, process and C ABI integration tests
+        run: cargo +stable test --workspace --all-targets --locked
       - name: Documentation tests
-        run: cargo +stable test --doc --locked
+        run: cargo +stable test --workspace --doc --locked
       - name: Check distributable crate
-        run: cargo +stable package --locked
+        run: cargo +stable package --locked -p freshen
+
+  dotnet:
+    # Linux has run locally. The Windows leg has never run: it is where the .NET binding is
+    # actually verified for Windows, so expect to fix whatever it finds.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # A hung test must fail the job with a diagnosis instead of occupying a runner for hours.
+    timeout-minutes: 30
+    defaults:
+      run:
+        # Git Bash on Windows, so the same shell scripts run everywhere.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Restore
+        run: dotnet restore bindings/dotnet/Freshen.sln
+      - name: Format
+        # Line endings differ on Windows checkouts, so format is checked once, on Linux.
+        if: runner.os == 'Linux'
+        run: dotnet format bindings/dotnet/Freshen.sln --verify-no-changes --no-restore
+      - name: Build and test the .NET binding
+        run: dotnet test bindings/dotnet/Freshen.sln --no-restore --logger "console;verbosity=normal" --blame-hang --blame-hang-timeout 10m --blame-hang-dump-type none
+      - name: Pack and verify the NuGet package (this platform's natives only)
+        run: |
+          sh bindings/dotnet/Tools/pack.sh
+          sh bindings/dotnet/Tools/verify-package.sh bindings/dotnet/artifacts/Freshen.*.nupkg
+
+  cpp:
+    # The C++ wrapper, including a real Qt 6 program. FRESHEN_REQUIRE_QT turns a missing Qt
+    # into a failure instead of a skip.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Install Qt 6 and build tools
+        run: sudo apt-get update && sudo apt-get install -y qt6-base-dev cmake ninja-build pkg-config
+      - name: Test the C++ header, wrapper and Qt integration
+        env:
+          FRESHEN_REQUIRE_QT: "1"
+        run: cargo +stable test -p freshen-ffi --locked --test cpp_header --test cpp_wrapper
+
+  objc-syntax:
+    # Language-level check only (ARC, blocks, nullability) against a stub Foundation;
+    # it needs no Apple SDK. The real build and tests are the `objc` job below.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax-check the Objective-C binding
+        run: sh bindings/objc/Tools/check-syntax.sh
+
+  objc:
+    # Builds and runs the Objective-C binding for real. It has never been run on a
+    # Mac yet, so a failure here is informative rather than blocking; remove
+    # continue-on-error once it has passed.
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Build and test the Objective-C binding
+        run: sh bindings/objc/Tools/run-tests.sh

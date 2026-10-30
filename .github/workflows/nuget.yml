@@ -1,0 +1,65 @@
+name: NuGet package
+
+# Builds the native libraries and helper on every supported platform, then packs and
+# verifies the Freshen NuGet package. It only produces a workflow artifact: it never
+# publishes to nuget.org (publishing is a deliberate, separate step).
+#
+# Run it by hand from the Actions tab. Only the Linux x64 leg has been exercised so
+# far (locally, by Tools/pack.sh and Tools/verify-package.sh); the Windows, macOS and
+# Linux arm64 legs are untested, and their runner labels may need adjusting.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  natives:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux legs use the oldest available image so the libraries need an older glibc.
+          - { os: ubuntu-22.04, rid: linux-x64 }
+          - { os: ubuntu-22.04-arm, rid: linux-arm64 }
+          - { os: windows-latest, rid: win-x64 }
+          - { os: macos-14, rid: osx-arm64 }
+          - { os: macos-15-intel, rid: osx-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Build and stage the native library and helper
+        shell: bash
+        run: sh bindings/dotnet/Tools/stage-native.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: natives-${{ matrix.rid }}
+          path: bindings/dotnet/runtimes
+          if-no-files-found: error
+
+  package:
+    needs: natives
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: natives-*
+          path: bindings/dotnet/runtimes
+          merge-multiple: true
+      - name: Pack (requires every platform)
+        run: |
+          FRESHEN_SKIP_STAGE=1 sh bindings/dotnet/Tools/pack.sh \
+            -p:FreshenRequiredRuntimes="linux-x64;linux-arm64;win-x64;osx-arm64;osx-x64"
+      - name: Verify the package
+        run: sh bindings/dotnet/Tools/verify-package.sh bindings/dotnet/artifacts/Freshen.*.nupkg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-package
+          path: bindings/dotnet/artifacts/*
+          if-no-files-found: error
