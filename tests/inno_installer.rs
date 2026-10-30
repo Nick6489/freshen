@@ -94,11 +94,12 @@ fn servicing_parent() {
     let scenario = &updater.transport.0;
     let cancel = Cancellation::default();
     let candidate = updater
-        .check(
+        .check_for_kind(
             &ReleaseSource::Manifest {
                 document: "https://fixture.invalid/manifest".parse().unwrap(),
                 signature: "https://fixture.invalid/signature".parse().unwrap(),
             },
+            PackageKind::Inno,
             &cancel,
             &mut |_| {},
         )
@@ -257,7 +258,7 @@ fn run_update(directory: &Path, installer: &Path, app_id: &str, enhanced: bool) 
             executable: true,
         }],
     };
-    let release = ReleaseManifest {
+    let mut release = ReleaseManifest {
         schema: 1,
         product: "inno-test".into(),
         channel: "stable".into(),
@@ -265,6 +266,10 @@ fn run_update(directory: &Path, installer: &Path, app_id: &str, enhanced: bool) 
         notes: String::new(),
         artifacts: vec![artifact],
     };
+    let mut portable = release.artifacts[0].clone();
+    portable.kind = PackageKind::Files;
+    portable.files[0].path = "portable.exe".into();
+    release.artifacts.insert(0, portable);
     let document = serde_json::to_vec(&release).unwrap();
     let signed = SignedManifest {
         signature: STANDARD.encode(

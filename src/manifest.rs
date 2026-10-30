@@ -11,7 +11,7 @@ use crate::{Error, Result};
 /// Prefix included in signatures to keep Freshen signatures domain separated.
 pub const SIGNING_DOMAIN: &[u8] = b"freshen-manifest-v1\0";
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum PackageKind {
     Files,
@@ -20,7 +20,7 @@ pub enum PackageKind {
     Inno,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct PackageFile {
     /// Portable relative path using forward slashes. Symlinks are not supported.
@@ -31,7 +31,7 @@ pub struct PackageFile {
     pub executable: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
     /// Exact Rust target triple. The host selects its distribution target explicitly.
@@ -74,8 +74,10 @@ impl ReleaseManifest {
                     "Inno packages require exactly one installer .exe".into(),
                 ));
             }
-            if artifact.target.is_empty() || !targets.insert(&artifact.target) {
-                return Err(Error::Invalid("empty or duplicate target".into()));
+            if artifact.target.is_empty() || !targets.insert((&artifact.target, artifact.kind)) {
+                return Err(Error::Invalid(
+                    "empty target or duplicate target/package kind".into(),
+                ));
             }
             check_hash(&artifact.sha256)?;
             if artifact.size == 0 || artifact.files.is_empty() || artifact.files.len() > 100_000 {

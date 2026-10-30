@@ -16,16 +16,22 @@ bounded extraction. An authenticated ZIP is retained through helper handoff;
 the helper checks the stage again before execution. Installer arguments are
 local policy, never downloaded command lines.
 
-Use `PreparedUpdate::arm` with `InstallLayout::Inno(InnoPolicy { ... })`:
+Use `InstallLayout::Inno(InnoPolicy { ... })`. Prefer `arm_current_exe` when
+the copied host can start independently; `arm` remains available for an
+explicitly deployed standalone helper. Establish the policy before discovery
+and pass its `package_kind()` to `Updater::check_for_kind`. The
+[distribution guide](distributions.md) covers portable/Inno artifacts sharing a
+target, and the [host guide](host-integration.md) covers helper startup and a
+surviving native progress presentation process.
 
 ```rust,no_run
 use freshen::{InstallLayout, InstallPolicy, PreparedUpdate};
 use freshen::inno::InnoPolicy;
 use std::path::Path;
-fn arm(update: PreparedUpdate, state: &Path, installed: &Path, helper: &Path)
+fn arm(update: PreparedUpdate, state: &Path, installed: &Path)
     -> freshen::Result<freshen::Handoff>
 {
-    update.arm(InstallPolicy {
+    update.arm_current_exe(InstallPolicy {
         root: state.into(),
         layout: InstallLayout::Inno(InnoPolicy {
             installer: "setup.exe".into(),
@@ -39,7 +45,7 @@ fn arm(update: PreparedUpdate, state: &Path, installed: &Path, helper: &Path)
         }),
         exit_timeout_secs: 120,
         confirmation_timeout_secs: 120,
-    }, helper, vec![])
+    }, vec![])
 }
 ```
 
@@ -192,10 +198,13 @@ Implementation files:
 | `src/inno_pipe.rs` | Shared native nonblocking pipe operations |
 | `src/inno_wire.rs` | Shared fixed protocol encoding/validation |
 | `inno/FreshenInno.iss` | Embedded DLL declarations and attributed event handlers |
-| `inno/example.iss` | Complete installer for the console harness |
 | `inno/build-bridge.ps1` | Both MSVC architectures with static CRT |
-| `examples/inno_host.rs` | Real discovery/prepare/arm console harness |
 | `tests/inno_installer.rs` | Opt-in compiled Inno 6/7 installation/update and migration fixtures |
+
+The disposable demo apps/scripts were removed after validation. Complete host
+bootstrap and installer source now live as documentation in
+`docs/reference-app-inno.md`; the native presentation pattern lives in
+`docs/host-integration.md`. The library/helper/installer regression fixtures stay.
 
 The helper creates one first-instance pipe with `PIPE_REJECT_REMOTE_CLIENTS`,
 message read mode and `PIPE_NOWAIT`. A protected DACL grants access only to the
@@ -296,8 +305,8 @@ Inno 7.1.1 x86 and native-x64 servicing are exercised by the real fixture
 matrix, including an Inno 6/x86 installation upgraded by native x64 Inno 7.
 `SetupArchitecture=x64` selects a native x64 setup process but also defaults
 to 64-bit install mode. Preserve your previous install mode explicitly when
-migrating: the example pins `ArchitecturesInstallIn64BitMode=` (empty) because
-its original Inno 6 script used 32-bit install mode. A native x64 setup process
+migrating: our Inno 6 migration fixture pins `ArchitecturesInstallIn64BitMode=`
+(empty) because its original script used 32-bit install mode. A native x64 setup process
 can run in that mode with the x64 DLL. Changing install mode can create a
 separate uninstall log even with the same AppId and directory. See
 [Inno's application identity rules](https://jrsoftware.org/ishelp/topic_sameappnotes.htm).

@@ -6,8 +6,8 @@ use crate::{
     util::{cstr, handle, store, to_c_string},
 };
 use freshen::{
-    Cancellation, Candidate, HttpTransport, ManifestLocation, PreparedUpdate, ReleaseManifest,
-    ReleaseNotes, ReleaseSource, TrustStore, Updater,
+    Cancellation, Candidate, HttpTransport, ManifestLocation, PackageKind, PreparedUpdate,
+    ReleaseManifest, ReleaseNotes, ReleaseSource, TrustStore, Updater,
 };
 use std::{
     ffi::{c_char, c_void},
@@ -27,6 +27,15 @@ pub struct FreshenCandidate(Candidate);
 /// A fully downloaded, verified and staged update. Freeing it without arming
 /// deletes its temporary files and leaves the installation untouched.
 pub struct FreshenPrepared(pub(crate) Option<PreparedUpdate>);
+
+/// Legacy single-kind selection. Mixed distributions fail rather than guess.
+pub const FRESHEN_PACKAGE_AUTO: i32 = 0;
+/// Portable application-owned files.
+pub const FRESHEN_PACKAGE_FILES: i32 = 1;
+/// A signed macOS application bundle.
+pub const FRESHEN_PACKAGE_MAC_BUNDLE: i32 = 2;
+/// An authenticated Inno installer payload (Rust hosts expose Inno arming).
+pub const FRESHEN_PACKAGE_INNO: i32 = 3;
 
 const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 300;
 /// Cancelling a blocked read is bounded by this timeout, so an absurd value would make a
@@ -331,16 +340,57 @@ pub unsafe extern "C" fn freshen_check(
     user: *mut c_void,
     out_candidate: *mut *mut FreshenCandidate,
 ) -> i32 {
+    unsafe {
+        freshen_check_for_kind(
+            updater,
+            source,
+            FRESHEN_PACKAGE_AUTO,
+            cancel,
+            on_event,
+            user,
+            out_candidate,
+        )
+    }
+}
+
+/// Check for the running copy's explicit `FRESHEN_PACKAGE_*` kind. Use FILES
+/// for portable copies and INNO for Inno-installed copies of the same product.
+/// AUTO preserves legacy behavior and rejects ambiguous mixed-kind feeds.
+/// Existing handle/struct layouts and the old `freshen_check` ABI are unchanged.
+///
+/// # Safety
+/// The same pointer and worker-thread contract as `freshen_check` applies.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn freshen_check_for_kind(
+    updater: *const FreshenUpdater,
+    source: *const FreshenSource,
+    package_kind: i32,
+    cancel: *const FreshenCancel,
+    on_event: FreshenEventFn,
+    user: *mut c_void,
+    out_candidate: *mut *mut FreshenCandidate,
+) -> i32 {
     run(|| {
         unsafe { store(out_candidate, ptr::null_mut(), "out_candidate") }?;
+        let kind = match package_kind {
+            FRESHEN_PACKAGE_AUTO => None,
+            FRESHEN_PACKAGE_FILES => Some(PackageKind::Files),
+            FRESHEN_PACKAGE_MAC_BUNDLE => Some(PackageKind::MacBundle),
+            FRESHEN_PACKAGE_INNO => Some(PackageKind::Inno),
+            _ => return Err(invalid("unknown package kind")),
+        };
         let updater = unsafe { handle(updater, "updater") }?;
         let source = unsafe { build_source(source) }?;
         let cancellation = unsafe { cancellation(cancel) };
         let bridge = EventBridge::new(on_event, user);
-        let found = updater
-            .0
-            .check(&source, &cancellation, &mut |event| bridge.emit(&event))
-            .map_err(|error| fail(&error))?;
+        let mut events = |event| bridge.emit(&event);
+        let found = match kind {
+            Some(kind) => updater
+                .0
+                .check_for_kind(&source, kind, &cancellation, &mut events),
+            None => updater.0.check(&source, &cancellation, &mut events),
+        }
+        .map_err(|error| fail(&error))?;
         if let Some(candidate) = found {
             unsafe {
                 store(

@@ -215,7 +215,7 @@ pub fn confirm_startup(root: &Path) -> Result<bool> {
     let artifact = release
         .artifacts
         .iter()
-        .find(|a| a.target == plan.target)
+        .find(|a| a.target == plan.target && a.kind == plan.policy.package_kind())
         .ok_or_else(|| Error::Invalid("missing artifact".into()))?;
     let file = artifact
         .files

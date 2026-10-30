@@ -8,10 +8,8 @@ This is an initial implementation, not yet published to crates.io. Review the [s
 
 ## Language bindings
 
-A disposable [native Windows UI test app](native-test-app/README.md) builds
-Petzold-style resource dialogs, Inno 7 installers for versions 1 and 2, and a
-signed local update feed. It includes standalone dialog checks and an opt-in
-installed-app update test; the external reference application remains separate.
+Hosts can use the documented [native progress presentation and helper
+integration pattern](docs/host-integration.md) with their own GUI.
 
 Use the Rust API directly, or use the optional [C ABI](ffi/README.md),
 [C# / .NET binding](bindings/dotnet/README.md),
@@ -34,7 +32,8 @@ review before production use.
 - Prepares the complete update while the application stays running.
 - Hands installation to a copied helper and waits for readiness before the host exits.
 - Replaces only locally declared program files on Windows/Linux, or a verified application bundle on macOS.
-- Journals replacement intent, retains backups, restores failed updates, and requires the new executable to acknowledge successful startup.
+- Runs authenticated Inno installers for explicitly owned Windows installations, with optional real installation progress and reboot reporting.
+- For file/bundle replacement, journals intent, retains backups, restores failed updates, and requires the new executable to acknowledge successful startup.
 
 Freshen provides no update UI. It does not call `process::exit` inside the library,
 kill a host application, or choose when the user should install. An explicitly
@@ -42,6 +41,13 @@ selected machine-wide Inno policy can invoke Windows UAC for the installer;
 custom installer scripts can also display UI despite silent switches.
 
 ## Release discovery and history
+
+For portable and installed copies sharing a product/channel/architecture, select
+explicitly with `check_for_kind` and the locally established
+`InstallPolicy::package_kind()`. One signed manifest may contain both `files`
+and `inno` artifacts for a target; duplicate target/kind pairs remain invalid.
+Legacy `check` rejects mixed kinds instead of guessing. See
+[distribution identity and compatibility](docs/distributions.md).
 
 Publish signed manifests anywhere your transport can reach. For provider-neutral discovery,
 use `ReleaseSource::Index { document: index_url }` pointing to a JSON array:
@@ -91,7 +97,13 @@ for release in candidate.release_history() {
 
 ## Integration
 
-Build and ship `freshen-helper` for your application's target, or use the application executable itself as the helper by calling `run_helper` before normal startup. A separate helper must be deployed with all runtime dependencies it needs; a self-contained Rust executable is simplest.
+Prefer using the application executable itself as its helper: call `run_helper`
+before GUI, audio, runtime and single-instance initialization, then use
+`PreparedUpdate::arm_current_exe`. The copied executable must be able to start
+independently of DLLs/assets beside the installed copy. A separately deployed
+`freshen-helper` remains a supported choice when that startup independence is
+impractical. It must be shipped with its runtime dependencies. Both choices use
+the same readiness, parent-exit and recovery protocol; Freshen owns no GUI.
 
 ```rust,no_run
 use freshen::{Cancellation, Event, HttpTransport, ReleaseSource, TrustStore, Updater};
@@ -118,7 +130,7 @@ fn prepare_update(
     };
     let cancellation = Cancellation::default();
     // Run on a worker thread. Send events through your GUI's dispatcher/channel.
-    match updater.check(&source, &cancellation, events)? {
+    match updater.check_for_kind(&source, freshen::PackageKind::Files, &cancellation, events)? {
         Some(candidate) => updater.prepare(candidate, temporary_parent, &cancellation, events).map(Some),
         None => Ok(None),
     }
@@ -133,7 +145,7 @@ After the application decides it can shut down:
 use freshen::{Handoff, InstallPolicy, PreparedUpdate};
 use std::path::Path;
 
-fn arm_update(prepared: PreparedUpdate, installation: &Path, helper: &Path)
+fn arm_update(prepared: PreparedUpdate, installation: &Path)
     -> freshen::Result<Handoff>
 {
     let policy = InstallPolicy::portable(
@@ -141,7 +153,7 @@ fn arm_update(prepared: PreparedUpdate, installation: &Path, helper: &Path)
         "my-application.exe".into(),
         vec!["my-application.exe".into(), "Manual.html".into()],
     );
-    prepared.arm(policy, helper, vec![])
+    prepared.arm_current_exe(policy, vec![])
 }
 ```
 
@@ -221,11 +233,11 @@ For other hosting, use `ReleaseSource::Manifest`. A custom `Transport` supports 
 
 ## Support boundaries
 
-- Intended for application-managed Windows/Linux portable directories and regular-file macOS bundles. Package-manager, MSIX, App Store, sandbox entitlement, service, and elevated installations need their own integration and are not implemented.
+- Supports application-managed Windows/Linux portable directories, regular-file macOS bundles, and explicitly owned Windows Inno installations. Package-manager, MSIX, App Store, sandbox entitlement and service installations need their own integration and are not implemented.
 - Schema 1 accepts ASCII paths and regular files only. Bundles with framework symlinks and archives containing resource-fork sidecars are rejected. Package on the destination OS to preserve executable permissions. Additional archive entry types require a schema/backend extension.
 - Portable inventories match the application's local owned-file list exactly by default. With `InstallPolicy::portable_expanding`, additional signed files are installed only under directories the running application explicitly passed in (including nested subdirectories). The manifest cannot introduce files or directories outside that local policy or remove an owned path; remote metadata cannot expand ownership by itself.
 - This is not a full TUF implementation: there is no expiration, transparency log, or protection against withholding newer releases. Rotate keys by shipping old and new public keys together before switching signers.
-- Installation directories, helper binaries, staging, and recovery metadata must be protected from other users. Freshen does not defend against a malicious process with the same filesystem privileges or elevate downloaded code.
+- Installation directories, helper binaries, staging, and recovery metadata must be protected from other users. Freshen does not defend against a malicious process with the same filesystem privileges. File/bundle replacements do not automatically elevate; explicit machine-wide Inno policy can request UAC for the authenticated installer after ownership checks.
 - The GUI owns scheduling and must serialize update requests. Disk-space failures are reported and backups retained; Freshen does not delete unrelated files to make room.
 
 ## Development

@@ -10,6 +10,17 @@ opaque handles and status codes.
 
 ## Shape of the API
 
+For portable and installed copies sharing a signed feed, use the additive
+`freshen_check_for_kind` with `FRESHEN_PACKAGE_FILES`, MAC_BUNDLE or INNO.
+`FRESHEN_PACKAGE_AUTO` and the unchanged `freshen_check` preserve legacy
+single-kind behavior and reject ambiguity. Existing struct/handle layouts and
+ABI version remain unchanged. See [distribution selection](../docs/distributions.md)
+for deployment compatibility and high-level-wrapper limitations. The current
+C installation policy still exposes portable/macOS layouts; Inno arming uses
+the Rust policy API. To use an application's executable as a helper through
+existing bindings, pass its own executable path to `freshen_arm` and dispatch
+`freshen_run_helper` at startup; copied startup/runtime independence is required.
+
 ```text
 freshen_updater_new ─► freshen_check ─► candidate ─► freshen_prepare ─► prepared
                                                                            │

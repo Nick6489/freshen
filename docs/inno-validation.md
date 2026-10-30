@@ -21,14 +21,20 @@ New files:
 - `inno-bridge/Cargo.toml`, `inno-bridge/src/lib.rs`: repository-only
   `freshen-inno-bridge` cdylib producing `FreshenInno.dll`.
 - `inno/FreshenInno.iss`: optional attributed Pascal handlers and embedded DLL.
-- `inno/example.iss`: complete install/update script for the harness.
 - `inno/build-bridge.ps1`: x86/x64 static-CRT release builds.
-- `inno/serve-updates.py`: optional loopback HTTPS demonstration server.
-- `examples/inno_host.rs`: Rust host using actual discovery, prepare and arm APIs.
 - `tests/inno_installer.rs`: real compiled Inno installer/helper matrix.
 - `docs/inno.md`: architecture, security, ABI, switches and troubleshooting.
 - `docs/reference-app-inno.md`: clean-checkout rebuild/distribution procedure.
 - `docs/inno-validation.md`: this inventory and validation record.
+- `docs/distributions.md`: copy-specific portable/Inno selection and compatibility.
+- `docs/host-integration.md`: self-helper startup, dependency requirements and
+  native presentation resource patterns.
+
+The disposable GUI app, its UI test crate and earlier console/example installer
+sources were removed at the user's request. Documentation retains complete
+integration/installer source and the native UI pattern. The original GUI test
+result is historical evidence, not part of current automated coverage. Generated
+local installers, test credentials and installed demo state are not committed.
 
 Modified existing files:
 
@@ -38,6 +44,10 @@ Modified existing files:
 - `src/install.rs`: local Inno layout, preflight, reboot state and separate
   recovery/discard rules.
 - `src/helper.rs`: dispatch after the existing parent-exit wait.
+- `src/updater.rs`: explicit target/kind discovery and exact selected-artifact
+  reauthentication; legacy ambiguity fails closed.
+- `ffi/src/updater.rs`, `ffi/include/freshen.h`: additive C selection API without
+  changing struct/handle layouts or existing function signatures.
 - `src/bin/release.rs`: `pack ... inno ...` support and help text.
 - `ffi/src/install.rs`: preserve old ABI by mapping the new reboot state to
   UNKNOWN; existing binding policy structs do not expose Inno arming yet.
@@ -47,6 +57,14 @@ Modified existing files:
   and opt-in real-installer testing instructions.
 
 ## New public configuration
+
+`Updater::check_for_kind`, `InstallPolicy::package_kind()` and
+`PreparedUpdate::arm_current_exe` make copy-specific selection and preferred
+self-helper integration explicit. Signed artifacts are unique by `(target,kind)`.
+Helper/recovery/startup confirmation resolve that same selected kind from local
+policy. The C API adds `freshen_check_for_kind` and package-kind constants.
+Separate-helper deployment remains fully supported. See the distribution and
+host guides for marker/detection responsibilities and startup dependencies.
 
 `PackageKind::Inno` serializes as `"inno"` within manifest schema 1.
 `InstallLayout::Inno(InnoPolicy)` extends existing `PreparedUpdate::arm`.
@@ -143,6 +161,14 @@ ABI changes were necessary. Formatting, strict Clippy, workspace tests,
 documentation tests and offline package verification were rerun.
 
 ### Remaining checks
+
+The final mixed-distribution regression tests passed selection in both orders,
+per-kind history, absent kinds, duplicate pair rejection, ambiguity across
+manifests, exact candidate/stage validation, recovery, real helper confirmation,
+the new C boundary, and signed release-tool merging. The real Inno 7 native-x64
+migration matrix also passed with a portable artifact first in each manifest;
+it selected Inno explicitly and completed all eight installer cases. Historical
+GUI evidence is preserved in `host-integration.md`; the demo source is removed.
 
 The external reference GUI is not in this repository and was not modified.
 Its next version needs to adopt the Rust policy/status API (or extend its

@@ -48,6 +48,16 @@ pub struct InstallPolicy {
 }
 
 impl InstallPolicy {
+    /// The package kind required by this copy's explicit local installation
+    /// policy. Establish the policy before discovery and pass this value to
+    /// `Updater::check_for_kind` when distributing multiple package kinds.
+    pub fn package_kind(&self) -> PackageKind {
+        match self.layout {
+            InstallLayout::Portable { .. } => PackageKind::Files,
+            InstallLayout::MacBundle { .. } => PackageKind::MacBundle,
+            InstallLayout::Inno(_) => PackageKind::Inno,
+        }
+    }
     pub fn portable(root: PathBuf, executable: String, owned_files: Vec<String>) -> Self {
         Self::portable_expanding(root, executable, owned_files, vec![])
     }
@@ -270,7 +280,7 @@ fn verify_plan(plan: &Plan) -> Result<(ReleaseManifest, Artifact)> {
     let artifact = release
         .artifacts
         .iter()
-        .find(|a| a.target == plan.target)
+        .find(|a| a.target == plan.target && a.kind == plan.policy.package_kind())
         .ok_or_else(|| Error::Invalid("missing target".into()))?
         .clone();
     plan.policy.validate(&artifact)?;
@@ -278,6 +288,17 @@ fn verify_plan(plan: &Plan) -> Result<(ReleaseManifest, Artifact)> {
 }
 
 impl PreparedUpdate {
+    /// Preferred self-helper path for applications whose copied executable can
+    /// start independently. Dispatch `run_helper` before GUI/audio/runtime setup.
+    /// Otherwise use `arm` with a separately deployed helper and its dependencies.
+    pub fn arm_current_exe(
+        self,
+        policy: InstallPolicy,
+        relaunch_args: Vec<String>,
+    ) -> Result<crate::Handoff> {
+        let executable = std::env::current_exe()?;
+        self.arm(policy, &executable, relaunch_args)
+    }
     /// Copy verified staging into the installation filesystem and start a helper.
     /// Returns only after the helper holds the installation lock and is waiting.
     /// The caller then saves work and exits, or explicitly cancels the handoff.
@@ -660,6 +681,26 @@ mod tests {
         assert_eq!(fs::read(plan.policy.root.join("app.exe")).unwrap(), b"old");
         discard_finished_installation(&plan.policy.root).unwrap();
         assert!(installation_status(&plan.policy.root).unwrap().is_none());
+    }
+
+    #[test]
+    fn mixed_manifest_helper_and_recovery_select_local_policy_kind() {
+        let (_root, mut plan) = fixture();
+        let mut release = manifest();
+        let mut installer = release.artifacts[0].clone();
+        installer.kind = PackageKind::Inno;
+        installer.files[0].path = "setup.exe".into();
+        release.artifacts.insert(0, installer);
+        plan.signed = signed(&release);
+        let path = transaction(&plan.policy.root).unwrap().join("plan.json");
+        fs::write(&path, serde_json::to_vec(&plan).unwrap()).unwrap();
+        fs::write(plan.policy.root.join("app.exe"), b"old").unwrap();
+        let loaded = load_plan(&path).unwrap();
+        assert_eq!(loaded.policy.package_kind(), PackageKind::Files);
+        apply(&loaded).unwrap();
+        assert_eq!(fs::read(plan.policy.root.join("app.exe")).unwrap(), b"new");
+        recover_installation(&plan.policy.root).unwrap();
+        assert_eq!(fs::read(plan.policy.root.join("app.exe")).unwrap(), b"old");
     }
 
     #[test]

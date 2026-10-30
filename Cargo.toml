@@ -11,7 +11,7 @@ readme = "README.md"
 exclude = ["/bindings"]
 
 [workspace]
-members = ["ffi", "inno-bridge", "native-test-app"]
+members = ["ffi", "inno-bridge"]
 
 [dependencies]
 base64 = "0.22"

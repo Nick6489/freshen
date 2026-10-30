@@ -2,7 +2,7 @@
 //! timer and decides whether to stand down or restart. There is no unsigned
 //! cross-machine "close this application" command in this protocol.
 use crate::{
-    Error, Result, SignedManifest, TrustStore,
+    Error, PackageKind, Result, SignedManifest, TrustStore,
     archive::hash_file,
     fsutil::{atomic_write, safe_join},
 };
@@ -39,6 +39,49 @@ pub fn inspect(
     current_version: &Version,
     target: &str,
 ) -> Result<SharedStatus> {
+    inspect_selected(
+        path,
+        root,
+        trust,
+        product,
+        channel,
+        current_version,
+        (target, None),
+    )
+}
+
+/// Inspect one explicitly selected `(target, kind)` from shared signed metadata.
+/// Only file/bundle inventories describe installed files. Inno's installer
+/// inventory cannot prove convergence of the installed application and is refused.
+pub fn inspect_for_kind(
+    path: &Path,
+    root: &Path,
+    trust: &TrustStore,
+    product: &str,
+    channel: &str,
+    current_version: &Version,
+    distribution: (&str, PackageKind),
+) -> Result<SharedStatus> {
+    inspect_selected(
+        path,
+        root,
+        trust,
+        product,
+        channel,
+        current_version,
+        (distribution.0, Some(distribution.1)),
+    )
+}
+
+fn inspect_selected(
+    path: &Path,
+    root: &Path,
+    trust: &TrustStore,
+    product: &str,
+    channel: &str,
+    current_version: &Version,
+    distribution: (&str, Option<PackageKind>),
+) -> Result<SharedStatus> {
     let metadata = match fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -58,9 +101,23 @@ pub fn inspect(
     {
         return Ok(SharedStatus::Unchanged);
     }
-    let Some(artifact) = release.artifacts.iter().find(|a| a.target == target) else {
+    let mut artifacts = release
+        .artifacts
+        .iter()
+        .filter(|a| a.target == distribution.0 && distribution.1.is_none_or(|kind| a.kind == kind));
+    let Some(artifact) = artifacts.next() else {
         return Ok(SharedStatus::Unchanged);
     };
+    if artifacts.next().is_some() {
+        return Err(Error::Invalid(
+            "ambiguous shared target; select a file/bundle kind with inspect_for_kind".into(),
+        ));
+    }
+    if artifact.kind == PackageKind::Inno {
+        return Err(Error::Invalid(
+            "an Inno payload inventory cannot prove installed-file convergence".into(),
+        ));
+    }
     let mut pending_files = Vec::new();
     for file in &artifact.files {
         let candidate = safe_join(root, &file.path)?;
@@ -94,6 +151,70 @@ pub fn inspect(
 mod tests {
     use super::*;
     use crate::tests::{manifest, signed, trust};
+    #[test]
+    fn mixed_shared_metadata_requires_kind_and_installer_bytes_never_prove_convergence() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("shared.json");
+        let mut release = manifest();
+        let mut installer = release.artifacts[0].clone();
+        installer.kind = PackageKind::Inno;
+        installer.files[0].path = "setup.exe".into();
+        release.artifacts.insert(0, installer);
+        publish(&path, &signed(&release), &trust()).unwrap();
+        let current = "1.0.0".parse().unwrap();
+        assert!(matches!(
+            inspect(
+                &path,
+                root.path(),
+                &trust(),
+                "test-app",
+                "stable",
+                &current,
+                "test-target"
+            ),
+            Err(Error::Invalid(_))
+        ));
+        fs::write(root.path().join("setup.exe"), b"new").unwrap();
+        assert!(matches!(
+            inspect_for_kind(
+                &path,
+                root.path(),
+                &trust(),
+                "test-app",
+                "stable",
+                &current,
+                ("test-target", PackageKind::Inno)
+            ),
+            Err(Error::Invalid(_))
+        ));
+        assert!(matches!(
+            inspect_for_kind(
+                &path,
+                root.path(),
+                &trust(),
+                "test-app",
+                "stable",
+                &current,
+                ("test-target", PackageKind::Files)
+            )
+            .unwrap(),
+            SharedStatus::WaitingForFiles { .. }
+        ));
+        fs::write(root.path().join("app.exe"), b"new").unwrap();
+        assert!(matches!(
+            inspect_for_kind(
+                &path,
+                root.path(),
+                &trust(),
+                "test-app",
+                "stable",
+                &current,
+                ("test-target", PackageKind::Files)
+            )
+            .unwrap(),
+            SharedStatus::ReadyToRestart { .. }
+        ));
+    }
     #[test]
     fn metadata_arriving_before_the_program_does_not_trigger_restart() {
         let temp = tempfile::tempdir().unwrap();

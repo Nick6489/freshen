@@ -74,4 +74,42 @@ fn publisher_tools_create_verifiable_multi_target_releases() {
         .unwrap();
     assert!(!duplicate.status.success());
     assert!(trust.verify(&signed).is_ok());
+    run(
+        temp.path(),
+        &[
+            "pack",
+            "dist",
+            "inno.zip",
+            "https://example.test/inno.zip",
+            "target-one",
+            "inno",
+            "my-app",
+            "1.2.3",
+            "stable",
+            "inno.json",
+        ],
+    );
+    run(
+        temp.path(),
+        &["merge", "mixed.json", "one.json", "inno.json"],
+    );
+    run(
+        temp.path(),
+        &["sign", "publisher.key", "mixed.json", "mixed.sig"],
+    );
+    let mixed = trust
+        .verify(&SignedManifest {
+            document: fs::read(temp.path().join("mixed.json")).unwrap(),
+            signature: fs::read_to_string(temp.path().join("mixed.sig")).unwrap(),
+        })
+        .unwrap();
+    assert_eq!(mixed.artifacts.len(), 2);
+    assert_eq!(mixed.artifacts[0].target, mixed.artifacts[1].target);
+    assert_ne!(mixed.artifacts[0].kind, mixed.artifacts[1].kind);
+    let duplicate = Command::new(env!("CARGO_BIN_EXE_freshen-release"))
+        .current_dir(temp.path())
+        .args(["merge", "duplicate.json", "one.json", "one.json"])
+        .status()
+        .unwrap();
+    assert!(!duplicate.success(), "same target/kind pair must not merge");
 }

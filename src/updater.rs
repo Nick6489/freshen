@@ -1,6 +1,6 @@
 use crate::{
-    Artifact, Cancellation, Error, Event, ReleaseManifest, Result, SignedManifest, Transport,
-    TrustStore,
+    Artifact, Cancellation, Error, Event, PackageKind, ReleaseManifest, Result, SignedManifest,
+    Transport, TrustStore,
     archive::{extract, hash_file},
     transport::fetch,
 };
@@ -108,9 +108,34 @@ impl PreparedUpdate {
 }
 
 impl<T: Transport> Updater<T> {
+    /// Legacy selection for feeds with one package kind for this target. Mixed
+    /// distributions require `check_for_kind`; ambiguity never chooses a backend.
     pub fn check(
         &self,
         source: &ReleaseSource,
+        cancel: &Cancellation,
+        events: &mut dyn FnMut(Event),
+    ) -> Result<Option<Candidate>> {
+        self.check_selected(source, None, cancel, events)
+    }
+
+    /// Select the running copy's locally established package kind, independent
+    /// of architecture/channel. Never infer it from downloaded metadata or the
+    /// mere presence of another copy's uninstall registration.
+    pub fn check_for_kind(
+        &self,
+        source: &ReleaseSource,
+        kind: PackageKind,
+        cancel: &Cancellation,
+        events: &mut dyn FnMut(Event),
+    ) -> Result<Option<Candidate>> {
+        self.check_selected(source, Some(kind), cancel, events)
+    }
+
+    fn check_selected(
+        &self,
+        source: &ReleaseSource,
+        kind: Option<PackageKind>,
         cancel: &Cancellation,
         events: &mut dyn FnMut(Event),
     ) -> Result<Option<Candidate>> {
@@ -180,6 +205,7 @@ impl<T: Transport> Updater<T> {
             return Err(Error::SizeLimit);
         }
         let mut best: Option<Candidate> = None;
+        let mut legacy_kind = None;
         let mut history = BTreeMap::new();
         let mut seen = BTreeSet::new();
         for ManifestLocation {
@@ -206,12 +232,18 @@ impl<T: Transport> Updater<T> {
                 continue;
             }
 
-            if let Some(artifact) = release
+            let mut applicable = release
                 .artifacts
                 .iter()
-                .find(|a| a.target == self.target)
-                .cloned()
-            {
+                .filter(|a| a.target == self.target && kind.is_none_or(|kind| a.kind == kind));
+            if let Some(artifact) = applicable.next().cloned() {
+                if applicable.next().is_some()
+                    || (kind.is_none()
+                        && legacy_kind.is_some_and(|previous| previous != artifact.kind))
+                {
+                    return Err(Error::Invalid("multiple package kinds for target; select the running copy's kind with check_for_kind".into()));
+                }
+                legacy_kind = Some(artifact.kind);
                 if let Some(previous) =
                     history.insert(release.version.clone(), release.notes.clone())
                     && previous != release.notes
@@ -253,6 +285,18 @@ impl<T: Transport> Updater<T> {
         // Revalidate with this updater's trust/policy in case a candidate was
         // obtained from a different Updater instance.
         let release = self.trust.verify(&candidate.signed)?;
+        let authenticated = release
+            .artifacts
+            .iter()
+            .find(|a| a.target == self.target && a.kind == candidate.artifact.kind)
+            .ok_or_else(|| {
+                Error::Invalid("selected target/package kind is absent from signed manifest".into())
+            })?;
+        if authenticated != &candidate.artifact {
+            return Err(Error::Invalid(
+                "candidate artifact differs from authenticated selection".into(),
+            ));
+        }
         if release.product != self.product
             || release.channel != self.channel
             || release.version <= self.current_version

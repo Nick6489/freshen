@@ -79,7 +79,7 @@ fn update_parent() {
         signature: "https://test.invalid/signature".parse().unwrap(),
     };
     let candidate = updater
-        .check(&source, &cancel, &mut |_| {})
+        .check_for_kind(&source, PackageKind::Files, &cancel, &mut |_| {})
         .unwrap()
         .unwrap();
     let prepared = updater
@@ -145,7 +145,7 @@ fn real_helper_commit_cancel_failure_and_timeout() {
         .unwrap();
     writer.write_all(&current).unwrap();
     let package = writer.finish().unwrap().into_inner();
-    let document = ReleaseManifest {
+    let mut document = ReleaseManifest {
         schema: 1,
         product: "helper-test".into(),
         channel: "stable".into(),
@@ -165,6 +165,11 @@ fn real_helper_commit_cancel_failure_and_timeout() {
             }],
         }],
     };
+    // The helper and startup confirmation must not pick the first target match.
+    let mut installer = document.artifacts[0].clone();
+    installer.kind = PackageKind::Inno;
+    installer.files[0].path = "setup.exe".into();
+    document.artifacts.insert(0, installer);
     let document = serde_json::to_vec(&document).unwrap();
     let signature = STANDARD.encode(
         SigningKey::from_bytes(&[19; 32])

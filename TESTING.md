@@ -1,9 +1,10 @@
 # Testing and application integration
 
-The [native Windows dialog test app](native-test-app/README.md) provides a
-buildable Petzold-style GUI and version-1/version-2 Inno 7 installers. Its normal
-workspace test checks resource dialogs and dialog-manager keyboard behavior;
-its opt-in installed-app test checks the real surviving progress UI and update.
+The disposable native Windows GUI was removed after its automated and hands-on
+rehearsal. The [host integration guide](docs/host-integration.md) preserves its
+native dialog/presentation pattern and manual accessibility checks. Its old UI
+tests are not part of current workspace coverage; library/helper/installer tests
+remain. A real reference app will supply its own maintained UI tests.
 
 Inno servicing has a separate [architecture, ABI and test guide](docs/inno.md)
 and [reproducible reference-app rebuild procedure](docs/reference-app-inno.md).

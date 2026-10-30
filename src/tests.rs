@@ -118,6 +118,118 @@ fn signature_authenticates_exact_bytes() {
     assert!(matches!(trust().verify(&release), Err(Error::Signature)));
 }
 
+fn inno_artifact(mut artifact: Artifact) -> Artifact {
+    artifact.kind = PackageKind::Inno;
+    artifact.files[0].path = "setup.exe".into();
+    artifact.url = "https://example.test/installer.zip".parse().unwrap();
+    artifact
+}
+
+#[test]
+fn mixed_distribution_selection_is_explicit_and_order_independent() {
+    let mut release = manifest();
+    let inno = inno_artifact(release.artifacts[0].clone());
+    release.artifacts.push(inno.clone());
+    assert!(release.validate().is_ok());
+    for reverse in [false, true] {
+        if reverse {
+            release.artifacts.reverse();
+        }
+        let (updater, source) = history_fixture(&[release.clone()]);
+        let cancel = Cancellation::default();
+        assert!(matches!(
+            updater.check(&source, &cancel, &mut |_| {}),
+            Err(Error::Invalid(_))
+        ));
+        for kind in [PackageKind::Files, PackageKind::Inno] {
+            let candidate = updater
+                .check_for_kind(&source, kind, &cancel, &mut |_| {})
+                .unwrap()
+                .unwrap();
+            assert_eq!(candidate.artifact().kind, kind);
+            assert_eq!(
+                candidate.artifact().files[0].path,
+                if kind == PackageKind::Files {
+                    "app.exe"
+                } else {
+                    "setup.exe"
+                }
+            );
+        }
+        assert!(
+            updater
+                .check_for_kind(&source, PackageKind::MacBundle, &cancel, &mut |_| {})
+                .unwrap()
+                .is_none()
+        );
+    }
+    release.artifacts.push(inno);
+    assert!(
+        release.validate().is_err(),
+        "same target and kind must remain unique"
+    );
+}
+
+#[test]
+fn kind_filters_history_and_legacy_never_switches_distributions() {
+    let portable = manifest();
+    let mut installer = manifest();
+    installer.version = "3.0.0".parse().unwrap();
+    installer.artifacts[0] = inno_artifact(installer.artifacts[0].clone());
+    let (updater, source) = history_fixture(&[portable.clone(), installer]);
+    let cancel = Cancellation::default();
+    let candidate = updater
+        .check_for_kind(&source, PackageKind::Files, &cancel, &mut |_| {})
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate.release().version, portable.version);
+    assert_eq!(candidate.release_history().len(), 1);
+    assert!(matches!(
+        updater.check(&source, &cancel, &mut |_| {}),
+        Err(Error::Invalid(_))
+    ));
+}
+
+#[test]
+fn mixed_preparation_reauthenticates_the_exact_selected_artifact() {
+    let (mut updater, source) = fixture("app.exe", b"new");
+    let document = updater
+        .transport
+        .0
+        .get("https://example.test/manifest")
+        .unwrap();
+    let mut release: ReleaseManifest = serde_json::from_slice(document).unwrap();
+    release
+        .artifacts
+        .insert(0, inno_artifact(release.artifacts[0].clone()));
+    let signed = signed(&release);
+    let responses = Arc::make_mut(&mut updater.transport.0);
+    responses.insert("https://example.test/manifest".into(), signed.document);
+    responses.insert(
+        "https://example.test/signature".into(),
+        signed.signature.into_bytes(),
+    );
+    let cancel = Cancellation::default();
+    let candidate = updater
+        .check_for_kind(&source, PackageKind::Files, &cancel, &mut |_| {})
+        .unwrap()
+        .unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let prepared = updater
+        .prepare(candidate.clone(), temporary.path(), &cancel, &mut |_| {})
+        .unwrap();
+    assert_eq!(
+        fs::read(prepared.staged_directory().join("app.exe")).unwrap(),
+        b"new"
+    );
+    let mut tampered = candidate;
+    tampered.artifact.url = "https://example.test/untrusted.zip".parse().unwrap();
+    assert!(matches!(
+        updater.prepare(tampered, temporary.path(), &cancel, &mut |_| {}),
+        Err(Error::Invalid(_))
+    ));
+}
+
 #[test]
 fn signature_from_another_key_is_rejected() {
     let unknown = TrustStore::new(vec![

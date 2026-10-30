@@ -112,6 +112,18 @@
 // `total` value meaning the size is not known.
 #define FRESHEN_TOTAL_UNKNOWN UINT64_MAX
 
+// Legacy single-kind selection. Mixed distributions fail rather than guess.
+#define FRESHEN_PACKAGE_AUTO 0
+
+// Portable application-owned files.
+#define FRESHEN_PACKAGE_FILES 1
+
+// A signed macOS application bundle.
+#define FRESHEN_PACKAGE_MAC_BUNDLE 2
+
+// An authenticated Inno installer payload (Rust hosts expose Inno arming).
+#define FRESHEN_PACKAGE_INNO 3
+
 // `FreshenSource.kind`: `a` is the URL of a JSON index of manifest locations.
 #define FRESHEN_SOURCE_INDEX 1
 
@@ -420,6 +432,21 @@ int32_t freshen_check(const struct FreshenUpdater *updater,
                       FreshenEventFn on_event,
                       void *user,
                       struct FreshenCandidate **out_candidate);
+
+// Check for the running copy's explicit `FRESHEN_PACKAGE_*` kind. Use FILES
+// for portable copies and INNO for Inno-installed copies of the same product.
+// AUTO preserves legacy behavior and rejects ambiguous mixed-kind feeds.
+// Existing handle/struct layouts and the old `freshen_check` ABI are unchanged.
+//
+// # Safety
+// The same pointer and worker-thread contract as `freshen_check` applies.
+int32_t freshen_check_for_kind(const struct FreshenUpdater *updater,
+                               const struct FreshenSource *source,
+                               int32_t package_kind,
+                               const struct FreshenCancel *cancel,
+                               FreshenEventFn on_event,
+                               void *user,
+                               struct FreshenCandidate **out_candidate);
 
 // Download, verify and extract a candidate into a private directory beneath
 // `temporary_parent`. The candidate handle stays valid and is not consumed.

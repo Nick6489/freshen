@@ -371,6 +371,86 @@ fn candidate_from(fx: &Fx, u: *const FreshenUpdater) -> *mut FreshenCandidate {
     candidate
 }
 
+#[test]
+fn explicit_package_selection_preserves_c_abi_and_rejects_ambiguity() {
+    let mut fx = Fx::new();
+    let mut release: freshen::ReleaseManifest =
+        serde_json::from_slice(fx.host.files.get("m/2.0.0").unwrap()).unwrap();
+    let mut installer = release.artifacts[0].clone();
+    installer.kind = freshen::PackageKind::Inno;
+    installer.files[0].path = "setup.exe".into();
+    release.artifacts.insert(0, installer);
+    let document = serde_json::to_vec(&release).unwrap();
+    fx.host
+        .files
+        .insert("s/2.0.0", support::sign(&document).into_bytes());
+    fx.host.files.insert("m/2.0.0", document);
+    let updater = updater(&fx);
+    let document = cs("https://test.invalid/m/2.0.0");
+    let signature = cs("https://test.invalid/s/2.0.0");
+    let source = source(
+        FRESHEN_SOURCE_MANIFEST,
+        document.as_ptr(),
+        signature.as_ptr(),
+    );
+    let (status, candidate) = check(updater, &source);
+    expect(status, FRESHEN_ERR_INVALID, "legacy mixed check");
+    assert!(candidate.is_null());
+    unsafe {
+        for kind in [
+            FRESHEN_PACKAGE_FILES,
+            FRESHEN_PACKAGE_INNO,
+            FRESHEN_PACKAGE_MAC_BUNDLE,
+            99,
+        ] {
+            let mut candidate = ptr::dangling_mut();
+            let status = freshen_check_for_kind(
+                updater,
+                &source,
+                kind,
+                ptr::null(),
+                None,
+                ptr::null_mut(),
+                &mut candidate,
+            );
+            expect(
+                status,
+                if kind == 99 {
+                    FRESHEN_ERR_INVALID_ARGUMENT
+                } else {
+                    FRESHEN_OK
+                },
+                "explicit check",
+            );
+            assert_eq!(
+                candidate.is_null(),
+                kind == 99 || kind == FRESHEN_PACKAGE_MAC_BUNDLE
+            );
+            if kind == FRESHEN_PACKAGE_FILES {
+                let parent = cs(fx.work.to_str().unwrap());
+                let mut prepared = ptr::null_mut();
+                expect(
+                    freshen_prepare(
+                        updater,
+                        candidate,
+                        parent.as_ptr(),
+                        ptr::null(),
+                        None,
+                        ptr::null_mut(),
+                        &mut prepared,
+                    ),
+                    FRESHEN_OK,
+                    "selected portable preparation",
+                );
+                assert!(!prepared.is_null());
+                freshen_prepared_free(prepared);
+            }
+            freshen_candidate_free(candidate);
+        }
+        freshen_updater_free(updater);
+    }
+}
+
 fn portable_policy(root: &CStr, exe: &CStr, owned: &[*const c_char]) -> FreshenInstallPolicy {
     FreshenInstallPolicy {
         struct_size: std::mem::size_of::<FreshenInstallPolicy>(),
