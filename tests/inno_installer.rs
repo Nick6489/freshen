@@ -1,4 +1,4 @@
-//! Opt-in real Inno 6 fixture. No tool downloads or system-wide installation.
+//! Opt-in real Inno 6/7 fixtures. No tool downloads or system-wide installation.
 #![cfg(windows)]
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ed25519_dalek::{Signer, SigningKey};
@@ -27,8 +27,22 @@ struct Local(Scenario);
 struct Cleanup(PathBuf);
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        let uninstaller = self.0.join("installed/unins000.exe");
-        if uninstaller.exists() {
+        // Also clean a regression that accidentally created another uninstall log.
+        let installed = self.0.join("installed");
+        let mut uninstallers: Vec<_> = fs::read_dir(&installed)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with("unins") && name.ends_with(".exe"))
+            })
+            .map(|entry| entry.path())
+            .collect();
+        uninstallers.sort();
+        for uninstaller in uninstallers.into_iter().rev().filter(|path| path.exists()) {
             let _ = Command::new(uninstaller)
                 .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
                 .status();
@@ -134,6 +148,7 @@ fn compile(
     version: &str,
     mode: &str,
     dll: &Path,
+    native_x64: bool,
 ) -> PathBuf {
     fs::write(
         directory.join("version.txt"),
@@ -176,6 +191,7 @@ fn compile(
     };
     let script = format!(
         r#"[Setup]
+{architecture}
 AppId={app_id}
 AppName=Freshen integration fixture
 AppVersion={version}
@@ -194,6 +210,16 @@ Source: "{output}\payload.bin"; DestDir: "{{app}}"; Flags: ignoreversion
 {behavior}
 "#,
         install = directory.join("installed").display(),
+        architecture = match (
+            native_x64,
+            std::env::var_os("FRESHEN_INITIAL_ISCC").is_some()
+        ) {
+            (false, _) => "",
+            // Inno 6 fixture used 32-bit install mode. Preserve that identity even
+            // though the new setup process and telemetry DLL are native x64.
+            (true, true) => "SetupArchitecture=x64\nArchitecturesInstallIn64BitMode=",
+            (true, false) => "SetupArchitecture=x64",
+        },
         output = directory.display()
     );
     let path = directory.join("fixture.iss");
@@ -306,18 +332,39 @@ fn run_update(directory: &Path, installer: &Path, app_id: &str, enhanced: bool) 
 }
 
 #[test]
-#[ignore = "requires FRESHEN_ISCC (Inno 6 ISCC.exe) and both release DLLs built by inno/build-bridge.ps1"]
+#[ignore = "requires FRESHEN_ISCC (Inno 6/7), optional FRESHEN_SETUP_ARCH=x64, and both release DLLs"]
 fn real_install_update_basic_enhanced_failure_reboot_and_mismatched_dll() {
     let compiler = PathBuf::from(std::env::var_os("FRESHEN_ISCC").expect("set FRESHEN_ISCC"));
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dll = root.join("target/i686-pc-windows-msvc/release/FreshenInno.dll");
-    let wrong_dll = root.join("target/x86_64-pc-windows-msvc/release/FreshenInno.dll");
+    let native_x64 = match std::env::var("FRESHEN_SETUP_ARCH").as_deref() {
+        Err(_) | Ok("x86") => false,
+        Ok("x64") => true,
+        _ => panic!("FRESHEN_SETUP_ARCH must be x86 or x64"),
+    };
+    let x86 = root.join("target/i686-pc-windows-msvc/release/FreshenInno.dll");
+    let x64 = root.join("target/x86_64-pc-windows-msvc/release/FreshenInno.dll");
+    let (dll, wrong_dll) = if native_x64 { (x64, x86) } else { (x86, x64) };
     assert!(dll.exists() && wrong_dll.exists());
     let temporary = tempfile::tempdir().unwrap();
     let directory = temporary.path();
     let _cleanup = Cleanup(directory.to_path_buf());
     let app_id = format!("FreshenIntegrationFixture-{}", std::process::id());
-    let initial = compile(&compiler, directory, &app_id, "1.0.0", "enhanced", &dll);
+    let initial_compiler = std::env::var_os("FRESHEN_INITIAL_ISCC").map(PathBuf::from);
+    // Optional Inno-6/x86 initial install followed by Inno-7/x64 updates.
+    let initial_dll = if initial_compiler.is_some() {
+        root.join("target/i686-pc-windows-msvc/release/FreshenInno.dll")
+    } else {
+        dll.clone()
+    };
+    let initial = compile(
+        initial_compiler.as_deref().unwrap_or(&compiler),
+        directory,
+        &app_id,
+        "1.0.0",
+        "enhanced",
+        &initial_dll,
+        native_x64 && initial_compiler.is_none(),
+    );
     assert!(
         Command::new(initial)
             .args([
@@ -344,7 +391,9 @@ fn real_install_update_basic_enhanced_failure_reboot_and_mismatched_dll() {
         ("overdue", &dll),
         ("locked", &dll),
     ] {
-        let installer = compile(&compiler, directory, &app_id, "2.0.0", mode, dll);
+        let installer = compile(
+            &compiler, directory, &app_id, "2.0.0", mode, dll, native_x64,
+        );
         use std::os::windows::fs::OpenOptionsExt;
         let held_file = (mode == "locked").then(|| {
             fs::OpenOptions::new()

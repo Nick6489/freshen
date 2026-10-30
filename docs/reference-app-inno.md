@@ -11,10 +11,11 @@ framework, reference-app-specific path or nonexistent build target is assumed.
 
 Use Windows with Visual Studio 2022 Build Tools (Desktop development with C++,
 MSVC x86/x64 and Windows SDK), Rust 1.88 or later (stable recommended), PowerShell,
-Inno Setup 6.7.3 or compatible Inno 6, Python 3.10+ and OpenSSL 3.x for the local
+Inno Setup 6.7.3 or 7.1.1 (both tested), Python 3.10+ and OpenSSL 3.x for the local
 HTTPS demonstration. Rust does not cross-link MSVC targets without the Windows
 toolchain. The core APIs remain usable on the project's existing platforms;
-servicing and the DLL require Windows. Inno 7 native-x64 is a separate test gate.
+servicing and the DLL require Windows. Native x64 Inno 7 and Inno 6-to-7
+migration are covered by the optional fixture matrix below.
 
 From a clean checkout in a VS developer PowerShell:
 
@@ -61,6 +62,9 @@ x86_64 DLL. Static CRT builds need no separate Rust runtime. The EXE contains
 the DLL through the include; do not separately install it into `{app}`.
 
 ## Build version 1 and its initial installer
+
+For Inno 7 native x64, see the dedicated instructions below; the baseline
+commands in this section retain Inno 6 compatibility.
 
 ```powershell
 $env:FRESHEN_EXAMPLE_VERSION = '1.0.0'
@@ -133,6 +137,70 @@ if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
 
 For the external reference app, this step builds its new executable/assets
 instead of the harness. Do not change its established AppId or uninstall scope.
+
+## Inno Setup 7 and native x64 installers
+
+Inno Setup 7 can coexist with Inno 6. Install its recommended x64 compiler:
+
+```powershell
+winget install --id JRSoftware.InnoSetup.7 --exact --source winget --silent --accept-package-agreements --accept-source-agreements
+$iscc7 = "$env:LOCALAPPDATA\Programs\Inno Setup 7\ISCC.exe"
+```
+
+If you installed for all users, locate `ISCC.exe` under `Program Files` instead.
+Installing the x64 compiler does **not** select an x64 installer: Inno 7 still
+defaults to x86. For the example's existing version-2 application staging folder:
+
+```powershell
+$bridge64 = "$repo\target\x86_64-pc-windows-msvc\release\FreshenInno.dll"
+& $iscc7 '/DAppVersion=2.0.0' '/DFreshenSetupArchitecture=x64' "/DSourceDir=$repo\target\inno-app-v2" "/DFreshenInnoDll=$bridge64" inno\example.iss
+if ($LASTEXITCODE -ne 0) { throw 'Native x64 installer compilation failed' }
+```
+
+Output: `target\inno-installers\FreshenExample-2.0.0-x64.exe`.
+The example macro emits `[Setup] SetupArchitecture=x64`; it is not a built-in
+Inno command-line switch. In your own installer script, set that directive
+directly and embed the x64 DLL. `SetupArchitecture=x64` also changes Inno's
+default allowed architecture and installation mode to x64-compatible. Review
+any explicit registry-view or Program Files directives in your real script.
+The example explicitly overrides `ArchitecturesInstallIn64BitMode=` (empty)
+to retain its Inno 6 installation's 32-bit install mode and existing uninstall
+log. The setup process and DLL still run as native x64. A previously 64-bit
+install-mode application should instead retain its original 64-bit install-mode
+directive. Changing mode is a separate migration: our test caught creation of
+`unins001.exe` when the old 32-bit mode was accidentally changed to 64-bit.
+Keep the original AppId, directory, privilege scope **and install mode** when
+servicing an existing installation. Compiler architecture, installer process
+architecture, install mode and application architecture are separate choices.
+
+For an Inno 7 x86 installer, pass `/DFreshenSetupArchitecture=x86` and embed the
+i686 DLL; its output filename ends in `-x86.exe`. Omitting the macro preserves
+the old example filename and default x86 behavior. Do not pass the macro to
+Inno 6, which does not support `SetupArchitecture`.
+
+Run the complete real-installer matrix for native x64:
+
+```powershell
+$env:FRESHEN_ISCC = $iscc7
+$env:FRESHEN_SETUP_ARCH = 'x64'
+cargo test --locked --test inno_installer -- --ignored --nocapture
+```
+
+Then validate migration from an Inno 6/x86 initial installation:
+
+```powershell
+$env:FRESHEN_INITIAL_ISCC = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+cargo test --locked --test inno_installer -- --ignored --nocapture
+Remove-Item Env:\FRESHEN_INITIAL_ISCC
+```
+
+For Inno 7 x86, set `FRESHEN_SETUP_ARCH=x86` and rerun. The tests automatically
+swap the correct/mismatched DLLs for the selected installer architecture. When
+returning to Inno 6 tests, set `FRESHEN_ISCC` back to its compiler and remove
+`FRESHEN_SETUP_ARCH` (or set it to `x86`). Neither test setting changes the
+application target in the signed manifest or the public Freshen policy API.
+
+Upstream reference: [64-bit Inno Setup](https://jrsoftware.org/ishelp/topic_64bit.htm).
 
 ## Create and sign the actual Freshen release
 
@@ -244,13 +312,13 @@ $env:FRESHEN_ISCC = $iscc
 cargo test --locked --test inno_installer -- --ignored --nocapture
 ```
 
-This opt-in test builds real temporary Inno 6 installers and exercises initial
+This opt-in test builds real temporary Inno 6/7 installers and exercises initial
 installation, version replacement, basic mode, enhanced mode, preparation
 failure, reboot-required result and wrong-bitness DLL fallback. It uses the real
 signed manifest/ZIP and copied helper. Native pipe/DLL tests run on both x86 and
 x64. See [the architecture and ABI guide](inno.md) for exact coverage and the
-manual deployment matrix. Tests do not claim validation of Inno 7 native-x64,
-UAC, reference GUI/NVDA behavior or all crash/file-lock cases.
+manual deployment matrix. Tests do not claim validation of UAC,
+reference GUI/NVDA behavior or all crash/file-lock cases.
 
 Validation performed on Windows in this implementation:
 
@@ -272,8 +340,17 @@ Validation performed on Windows in this implementation:
   completed it manually. The installed executable reported 1.0.0 and its HKCU
   uninstall registration had the expected AppId, directory and uninstaller.
   Automated control capture did not succeed, so this is a manual interactive
-  smoke test, not an automated screen-reader/UI test. UAC, Inno 7 native-x64,
+  smoke test, not an automated screen-reader/UI test. UAC,
   reference GUI/NVDA and OS-crash testing remain unexecuted.
+- Inno 7.1.1 was subsequently installed side by side. The full real-installer
+  matrix passed for x86, native x64 (default 64-bit install mode), and migration
+  from an Inno 6/x86 initial installation to native x64 Inno 7 while preserving
+  the original 32-bit install mode. Enhanced mode observed real counters with
+  the matching DLL; the opposite-bitness DLL fell back safely. Both example
+  installer architectures compiled. An initial migration run that allowed the
+  install-mode default to change produced `unins001.exe` and failed the identity
+  assertion; explicitly retaining the existing mode resolved it. There was no
+  manual interactive Inno 7 wizard or machine-wide UAC test.
 
 To build the next external reference application version:
 

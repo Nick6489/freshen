@@ -13,7 +13,15 @@ DefaultDirName={localappdata}\FreshenInnoExample
 PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\inno_host.exe
 OutputDir=..\target\inno-installers
+#ifdef FreshenSetupArchitecture
+SetupArchitecture={#FreshenSetupArchitecture}
+; Preserve this example's existing Inno 6 installation identity.
+; Installer process architecture does not require changing install mode.
+ArchitecturesInstallIn64BitMode=
+OutputBaseFilename=FreshenExample-{#AppVersion}-{#FreshenSetupArchitecture}
+#else
 OutputBaseFilename=FreshenExample-{#AppVersion}
+#endif
 Compression=lzma2
 SolidCompression=yes
 CloseApplications=no

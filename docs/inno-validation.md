@@ -110,6 +110,40 @@ test. The optional loopback HTTPS demonstration was documented but not run.
 
 ## Remaining deployment validation and reference-app work
 
+### Inno Setup 7 follow-up
+
+Inno Setup 7.1.1 (x64 compiler) was installed alongside version 6 with winget.
+The real fixture matrix passed separately with:
+
+| Compiler | Installer process | Initial install | Install mode |
+| --- | --- | --- | --- |
+| Inno 7.1.1 | x86 | Inno 7 x86 | Default 32-bit |
+| Inno 7.1.1 | x64 | Inno 7 x64 | Default 64-bit |
+| Inno 7.1.1 | x64 | Inno 6.7.3 x86 | Explicitly retain 32-bit |
+
+Each run covered the complete basic/enhanced/failure/reboot/mismatch/disconnect/
+overdue/locked-file matrix. The native-x64 runs used the x64 bridge and tested
+the x86 bridge as the incompatible DLL. The enhanced case observed real
+progress. Single-uninstaller identity assertions passed after every successful
+update, including cross-version/compiler migration. Both x86 and x64 versions
+of the actual example installer also compiled using Inno 7.
+
+The first migration attempt accepted Inno 7's new default 64-bit install mode
+and produced `unins001.exe`. This was a useful failing identity test. The example
+now explicitly retains its original 32-bit install mode when selecting a native
+x64 setup process, and the corrected migration matrix passed. DLL/process
+bitness and install mode are independent. Applications already using 64-bit
+install mode must retain that mode instead.
+
+New example build macro: `FreshenSetupArchitecture=x86|x64` (Inno 7 only).
+New opt-in test settings: `FRESHEN_SETUP_ARCH=x86|x64` and optional
+`FRESHEN_INITIAL_ISCC` (the compiler for an Inno 6/x86 initial installation).
+Exact commands are in `reference-app-inno.md`. No core servicing API or bridge
+ABI changes were necessary. Formatting, strict Clippy, workspace tests,
+documentation tests and offline package verification were rerun.
+
+### Remaining checks
+
 The external reference GUI is not in this repository and was not modified.
 Its next version needs to adopt the Rust policy/status API (or extend its
 language binding), integrate the include with its own established AppId, build
@@ -117,8 +151,8 @@ the correct installer-process DLL, provide a surviving progress UI if needed,
 and publish a signed `inno` artifact through its existing distribution service.
 The complete steps are in `reference-app-inno.md`.
 
-Inno 7 native-x64 end-to-end, machine-wide UAC and alternate credentials,
+Manual interactive Inno 7, machine-wide UAC and alternate credentials,
 reference GUI/NVDA, OS/helper crash recovery and broader files-in-use deployment
-cases remain unexecuted. Only the listed per-user Inno 6 matrix was exercised.
+cases remain unexecuted. The listed real matrices cover per-user Inno 6 and 7.
 No rollback, safe mid-install cancellation, automatic restart, startup-health
 confirmation for Inno, crates.io publication or production release is claimed.

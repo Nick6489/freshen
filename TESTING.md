@@ -2,12 +2,19 @@
 
 Inno servicing has a separate [architecture, ABI and test guide](docs/inno.md)
 and [reproducible reference-app rebuild procedure](docs/reference-app-inno.md).
-Run `inno/build-bridge.ps1`, set `FRESHEN_ISCC` to Inno 6's `ISCC.exe`, then run
+Run `inno/build-bridge.ps1`, set `FRESHEN_ISCC` to Inno 6 or 7's `ISCC.exe`, then run
 `cargo test --locked --test inno_installer -- --ignored --nocapture` for real
 per-user installer fixtures. Normal workspace tests include protocol, native
 pipe/DLL and status tests; the real installer suite is opt-in because it creates
 temporary installations and uninstall registry entries. Inno success means
 installer process success, with no Freshen startup-confirmation rollback.
+
+For Inno 7 native x64, set `FRESHEN_SETUP_ARCH=x64`; otherwise the fixtures
+default to x86. Set `FRESHEN_INITIAL_ISCC` to Inno 6's compiler to also test
+upgrading its x86/32-bit-install-mode installation with a native x64 Inno 7
+installer, retaining the existing install mode and uninstall log. Remove that
+variable to test a fresh Inno 7 installation. See the rebuild guide for exact
+commands and the distinction between installer architecture and install mode.
 
 Freshen has automated library, binding, and real-process tests. You do not need a
 GUI application to test signatures, archive limits, ownership rules, or helper

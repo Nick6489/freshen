@@ -60,7 +60,7 @@ different directory fails before helper readiness. Thus this backend services
 an existing Inno installation; ordinary initial installation still uses Inno.
 Existing nonstandard installers without `InstallLocation` are rejected.
 
-The update script must keep its original `AppId`, install scope and directory
+The update script must keep its original `AppId`, install scope, install mode and directory
 semantics. Freshen cannot inspect an executable to prove its embedded AppId:
 the pinned publisher remains responsible for shipping the correct script.
 There is no AppId override switch. Do not convert a portable installation by
@@ -195,7 +195,7 @@ Implementation files:
 | `inno/example.iss` | Complete installer for the console harness |
 | `inno/build-bridge.ps1` | Both MSVC architectures with static CRT |
 | `examples/inno_host.rs` | Real discovery/prepare/arm console harness |
-| `tests/inno_installer.rs` | Opt-in compiled Inno 6 installation/update fixtures |
+| `tests/inno_installer.rs` | Opt-in compiled Inno 6/7 installation/update and migration fixtures |
 
 The helper creates one first-instance pipe with `PIPE_REJECT_REMOTE_CLIENTS`,
 message read mode and `PIPE_NOWAIT`. A protected DACL grants access only to the
@@ -292,8 +292,15 @@ Inno 6's installer process is 32-bit even when it installs a 64-bit application:
 embed the **i686** DLL. A native 64-bit Inno 7 installer needs the **x86_64** DLL.
 A 32-bit installer needs i686 regardless of application architecture. Select
 using the installer compiler/configuration, not the Rust application's target.
-Inno 7 native-x64 end-to-end validation is a separate compatibility gate; the
-shared ABI and both DLL builds alone do not establish it.
+Inno 7.1.1 x86 and native-x64 servicing are exercised by the real fixture
+matrix, including an Inno 6/x86 installation upgraded by native x64 Inno 7.
+`SetupArchitecture=x64` selects a native x64 setup process but also defaults
+to 64-bit install mode. Preserve your previous install mode explicitly when
+migrating: the example pins `ArchitecturesInstallIn64BitMode=` (empty) because
+its original Inno 6 script used 32-bit install mode. A native x64 setup process
+can run in that mode with the x64 DLL. Changing install mode can create a
+separate uninstall log even with the same AppId and directory. See
+[Inno's application identity rules](https://jrsoftware.org/ishelp/topic_sameappnotes.htm).
 
 Define `FreshenInnoDll` to the selected absolute DLL path, then include
 `FreshenInno.iss` at top level of your script. It adds one `[Files]` entry with
@@ -353,7 +360,7 @@ The manual checks below remain required for a release.
 | Stale Applying after crash | Unknown outcome; manual Inno repair, never Freshen file rollback |
 
 Before shipping, test ordinary interactive install with no Freshen running;
-Inno 7 native-x64; machine-wide UAC acceptance/cancellation and alternate
+your actual application's Inno 6/7 migration; machine-wide UAC acceptance/cancellation and alternate
 credentials; file locks and pending-reboot replacement; all application
 instances exiting; helper/installer/OS crashes; registry identity before and
 after update; and NVDA on the real surviving update UI. The automation and
