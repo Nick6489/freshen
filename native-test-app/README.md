@@ -7,6 +7,11 @@ imitating a dialog. Inno 7 builds native x64 per-user installers. Both applicati
 versions, the x64 bridge DLL, helper and signed update payload are built locally.
 Nothing is published and no network or certificate-store change is required.
 
+The default demonstration is hands-on: install version 1, enable the version 2
+feed, and let the person evaluating Freshen choose Check and Install and observe
+the progress themselves. Do not run the opt-in installed-app automation during
+that rehearsal; it drives the entire update and closes the reopened app.
+
 ## Build
 
 Requirements: Windows, Rust 1.88+ with x64/i686 MSVC targets, Visual Studio C++
@@ -185,7 +190,9 @@ The standalone native-dialog test passed. The installed-app UI test then passed
 in 7.37 seconds: it adopted the open version 1 dialog, prepared the signed update,
 observed the separate responsive monitor with blocked close and indeterminate
 finalization, verified real telemetry/exit 0/Committed/single uninstaller, and
-opened and verified version 2.0.0. Version 2 is installed on this machine.
+opened and verified version 2.0.0. That automated run installed version 2; the
+demo was then restored to version 1 with version 2 still available so the user
+could experience the update manually. The completed transaction was archived.
 
 Computer-use accessibility inspection of the installed version 2 independently
 reported a native dialog, `Installed version: 2.0.0`, labelled/settable test edit,
