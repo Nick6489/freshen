@@ -16,6 +16,8 @@ pub const SIGNING_DOMAIN: &[u8] = b"freshen-manifest-v1\0";
 pub enum PackageKind {
     Files,
     MacBundle,
+    /// ZIP containing exactly one signed Inno Setup executable.
+    Inno,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +63,17 @@ impl ReleaseManifest {
         }
         let mut targets = BTreeSet::new();
         for artifact in &self.artifacts {
+            if artifact.kind == PackageKind::Inno
+                && (artifact.files.len() != 1
+                    || !artifact.files[0]
+                        .path
+                        .to_ascii_lowercase()
+                        .ends_with(".exe"))
+            {
+                return Err(Error::Invalid(
+                    "Inno packages require exactly one installer .exe".into(),
+                ));
+            }
             if artifact.target.is_empty() || !targets.insert(&artifact.target) {
                 return Err(Error::Invalid("empty or duplicate target".into()));
             }

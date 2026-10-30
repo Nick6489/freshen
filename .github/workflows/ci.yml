@@ -25,6 +25,13 @@ jobs:
         run: cargo +stable test --workspace --all-targets --locked
       - name: Documentation tests
         run: cargo +stable test --workspace --doc --locked
+      - name: Build both Inno bridge architectures and test x86 ABI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          rustup target add i686-pc-windows-msvc x86_64-pc-windows-msvc --toolchain stable
+          ./inno/build-bridge.ps1
+          cargo +stable test -p freshen-inno-bridge --target i686-pc-windows-msvc --locked
       - name: Check distributable crate
         run: cargo +stable package --locked -p freshen
 

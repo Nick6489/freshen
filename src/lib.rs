@@ -8,6 +8,7 @@ mod archive;
 mod error;
 mod fsutil;
 mod helper;
+pub mod inno;
 mod install;
 mod manifest;
 pub mod shared;

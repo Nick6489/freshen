@@ -1,5 +1,14 @@
 # Testing and application integration
 
+Inno servicing has a separate [architecture, ABI and test guide](docs/inno.md)
+and [reproducible reference-app rebuild procedure](docs/reference-app-inno.md).
+Run `inno/build-bridge.ps1`, set `FRESHEN_ISCC` to Inno 6's `ISCC.exe`, then run
+`cargo test --locked --test inno_installer -- --ignored --nocapture` for real
+per-user installer fixtures. Normal workspace tests include protocol, native
+pipe/DLL and status tests; the real installer suite is opt-in because it creates
+temporary installations and uninstall registry entries. Inno success means
+installer process success, with no Freshen startup-confirmation rollback.
+
 Freshen has automated library, binding, and real-process tests. You do not need a
 GUI application to test signatures, archive limits, ownership rules, or helper
 rollback. You do need a disposable copy of your packaged application to establish

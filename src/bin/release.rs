@@ -9,7 +9,7 @@ use std::{
 };
 
 const USAGE: &str = "freshen-release keygen PRIVATE_KEY PUBLIC_KEY\n\
-freshen-release pack DIRECTORY ZIP URL TARGET files|mac_bundle PRODUCT VERSION CHANNEL MANIFEST\n\
+freshen-release pack DIRECTORY ZIP URL TARGET files|mac_bundle|inno PRODUCT VERSION CHANNEL MANIFEST\n\
 freshen-release merge OUTPUT_MANIFEST INPUT_MANIFEST...\n\
 freshen-release sign PRIVATE_KEY MANIFEST SIGNATURE\n\n\
 freshen-release recover INSTALLATION_ROOT\n\n\
@@ -67,6 +67,7 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             let kind = match args[5].as_str() {
                 "files" => PackageKind::Files,
                 "mac_bundle" => PackageKind::MacBundle,
+                "inno" => PackageKind::Inno,
                 _ => return Err("unknown package kind".into()),
             };
             let mut files = Vec::new();

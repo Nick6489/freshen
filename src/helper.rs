@@ -131,6 +131,9 @@ fn execute(plan: &Plan) -> Result<()> {
     if txn.join("cancel").exists() {
         return Ok(());
     }
+    if let crate::InstallLayout::Inno(policy) = &plan.policy.layout {
+        return crate::inno::execute(plan, policy);
+    }
     if let Err(error) = apply(plan) {
         // apply attempts rollback itself; leave a persistent failure if that also failed.
         if install::installation_status(&plan.policy.root)?

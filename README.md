@@ -31,7 +31,10 @@ review before production use.
 - Replaces only locally declared program files on Windows/Linux, or a verified application bundle on macOS.
 - Journals replacement intent, retains backups, restores failed updates, and requires the new executable to acknowledge successful startup.
 
-Freshen never opens a dialog, browser, or console window for an update. It does not call `process::exit` inside the library, kill a host application, acquire administrator privileges, or choose when the user should install.
+Freshen provides no update UI. It does not call `process::exit` inside the library,
+kill a host application, or choose when the user should install. An explicitly
+selected machine-wide Inno policy can invoke Windows UAC for the installer;
+custom installer scripts can also display UI despite silent switches.
 
 ## Release discovery and history
 
@@ -155,6 +158,15 @@ fn main() -> freshen::Result<()> {
 ```
 
 ## Installation and recovery
+
+For existing Windows applications installed by Inno Setup, use the optional
+[Inno servicing backend](docs/inno.md). It reuses signed ZIP preparation and
+helper readiness, runs an ordinary installer silently, and optionally receives
+real progress through `FreshenInno.dll` and `FreshenInno.iss`. Inno owns its own
+installation and repair; the file-replacement rollback and startup-confirmation
+rules below apply to portable files and macOS bundles. Machine-wide Inno policy
+explicitly permits a Windows UAC prompt. See the complete
+[reference application rebuild guide](docs/reference-app-inno.md).
 
 The installation directory must already exist and be writable by the current user. Freshen stores its lock and transaction beneath `.freshen` in that directory. Do not include `.freshen` in your package or owned-file list.
 

@@ -21,6 +21,8 @@ use std::{
 /// Local application policy, never inferred from an untrusted download name.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InstallLayout {
+    /// Inno owns installation; root is a user-writable servicing directory.
+    Inno(crate::inno::InnoPolicy),
     Portable {
         owned_files: Vec<String>,
         executable: String,
@@ -79,6 +81,7 @@ impl InstallPolicy {
             ));
         }
         match &self.layout {
+            InstallLayout::Inno(policy) => policy.validate(artifact)?,
             InstallLayout::Portable {
                 owned_files,
                 executable,
@@ -158,11 +161,13 @@ impl InstallPolicy {
                 .map(|file| file.path.clone())
                 .collect(),
             InstallLayout::MacBundle { bundle_name, .. } => vec![bundle_name.clone()],
+            InstallLayout::Inno(_) => vec![],
         }
     }
 
     pub(crate) fn executable(&self) -> &str {
         match &self.layout {
+            InstallLayout::Inno(policy) => &policy.executable,
             InstallLayout::Portable { executable, .. }
             | InstallLayout::MacBundle { executable, .. } => executable,
         }
@@ -178,6 +183,8 @@ pub enum InstallState {
     RollingBack,
     RolledBack,
     Failed,
+    /// Inno completed but requires a reboot. Freshen never initiates it.
+    RebootRequired,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,6 +338,9 @@ impl PreparedUpdate {
 
 pub(crate) fn verify_stage(plan: &Plan) -> Result<()> {
     let (_, artifact) = verify_plan(plan)?;
+    if let InstallLayout::Inno(policy) = &plan.policy.layout {
+        crate::inno::preflight(&plan.policy.root, policy)?;
+    }
     let stage = transaction(&plan.policy.root)?.join("stage");
     for file in &artifact.files {
         let path = safe_join(&stage, &file.path)?;
@@ -535,9 +545,12 @@ pub fn recover_installation(root: &Path) -> Result<InstallStatus> {
     let mut journal = load_journal(&txn)?;
     if matches!(
         journal.status.state,
-        InstallState::Committed | InstallState::RolledBack
+        InstallState::Committed | InstallState::RolledBack | InstallState::RebootRequired
     ) {
         return Ok(journal.status);
+    }
+    if matches!(plan.policy.layout, InstallLayout::Inno(_)) {
+        return Err(Error::Recovery("Inno recovery requires inspecting installer logs and repairing with the same AppId; automatic rollback is unavailable".into()));
     }
     rollback_inner(&plan, &mut journal)?;
     Ok(journal.status)
@@ -553,10 +566,20 @@ pub fn discard_finished_installation(root: &Path) -> Result<()> {
         return Ok(());
     }
     let state = load_journal(&txn)?.status.state;
+    let finished_inno_failure = state == InstallState::Failed
+        && matches!(
+            load_plan(&txn.join("plan.json"))?.policy.layout,
+            InstallLayout::Inno(_)
+        )
+        && crate::inno::status(&root)?.is_some_and(|s| s.exit_code.is_some());
     if !matches!(
         state,
-        InstallState::Committed | InstallState::RolledBack | InstallState::Prepared
-    ) {
+        InstallState::Committed
+            | InstallState::RolledBack
+            | InstallState::Prepared
+            | InstallState::RebootRequired
+    ) && !finished_inno_failure
+    {
         return Err(Error::Recovery(
             "cannot discard an unfinished installation".into(),
         ));

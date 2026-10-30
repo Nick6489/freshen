@@ -203,6 +203,7 @@ fn state_code(state: &InstallState) -> i32 {
         InstallState::RollingBack => FRESHEN_STATE_ROLLING_BACK,
         InstallState::RolledBack => FRESHEN_STATE_ROLLED_BACK,
         InstallState::Failed => FRESHEN_STATE_FAILED,
+        InstallState::RebootRequired => FRESHEN_STATE_UNKNOWN,
     }
 }
 
