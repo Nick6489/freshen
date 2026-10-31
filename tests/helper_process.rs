@@ -252,7 +252,16 @@ fn real_helper_commit_cancel_failure_and_timeout() {
                 Err(Error::Busy) if Instant::now() < deadline => {
                     thread::sleep(Duration::from_millis(100))
                 }
-                result => panic!("cleanup failed: {result:?}"),
+                // Windows can retain the copied helper's image mapping after
+                // its transaction lock is released, until process teardown.
+                Err(Error::Io(error))
+                    if cfg!(windows)
+                        && error.kind() == std::io::ErrorKind::PermissionDenied
+                        && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(100))
+                }
+                result => panic!("{mode}: cleanup failed: {result:?}"),
             }
         }
     }
