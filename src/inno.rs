@@ -235,6 +235,7 @@ pub(crate) fn execute(plan: &Plan, policy: &InnoPolicy) -> Result<()> {
 }
 
 /// `fs::canonicalize` on Windows returns `\\?\`. Inno rejects `?` in `{app}`.
+#[cfg(any(windows, test))]
 fn inno_directory(path: &Path) -> String {
     let text = path.display().to_string();
     if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
@@ -590,7 +591,9 @@ mod tests {
     #[test]
     fn inno_directory_strips_the_windows_verbatim_prefix() {
         assert_eq!(
-            inno_directory(Path::new(r"\\?\C:\Users\nick\AppData\Local\Programs\BeepRS")),
+            inno_directory(Path::new(
+                r"\\?\C:\Users\nick\AppData\Local\Programs\BeepRS"
+            )),
             r"C:\Users\nick\AppData\Local\Programs\BeepRS"
         );
         assert_eq!(
