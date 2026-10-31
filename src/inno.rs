@@ -234,6 +234,15 @@ pub(crate) fn execute(plan: &Plan, policy: &InnoPolicy) -> Result<()> {
     result
 }
 
+/// `fs::canonicalize` on Windows returns `\\?\`. Inno rejects `?` in `{app}`.
+fn inno_directory(path: &Path) -> String {
+    let text = path.display().to_string();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    text.strip_prefix(r"\\?\").unwrap_or(&text).to_string()
+}
+
 /// Fixed switches; no caller-supplied switches may override safety or install identity.
 #[cfg(windows)]
 fn arguments(policy: &InnoPolicy, log: &Path) -> Vec<String> {
@@ -245,7 +254,7 @@ fn arguments(policy: &InnoPolicy, log: &Path) -> Vec<String> {
         "/RESTARTEXITCODE=3010".into(),
         "/NORESTARTAPPLICATIONS".into(),
         "/NOCLOSEAPPLICATIONS".into(),
-        format!("/DIR={}", policy.directory.display()),
+        format!("/DIR={}", inno_directory(&policy.directory)),
         format!("/LOG={}", log.display()),
         if policy.machine_wide {
             "/ALLUSERS".into()
@@ -578,6 +587,21 @@ mod windows {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn inno_directory_strips_the_windows_verbatim_prefix() {
+        assert_eq!(
+            inno_directory(Path::new(r"\\?\C:\Users\nick\AppData\Local\Programs\BeepRS")),
+            r"C:\Users\nick\AppData\Local\Programs\BeepRS"
+        );
+        assert_eq!(
+            inno_directory(Path::new(r"\\?\UNC\server\share\BeepRS")),
+            r"\\server\share\BeepRS"
+        );
+        assert_eq!(
+            inno_directory(Path::new(r"C:\Users\nick\AppData\Local\Programs\BeepRS")),
+            r"C:\Users\nick\AppData\Local\Programs\BeepRS"
+        );
+    }
     #[test]
     fn signed_inno_inventory_is_exactly_one_executable() {
         let mut manifest = crate::tests::manifest();
