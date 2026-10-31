@@ -80,6 +80,7 @@ pub fn manifest(
         artifacts: vec![Artifact {
             target: "test-target".into(),
             kind: PackageKind::Files,
+            format: freshen::PackageFormat::Zip,
             url: "https://test.invalid/package".parse().unwrap(),
             sha256: hex::encode(Sha256::digest(package)),
             size: package.len() as u64,

@@ -44,8 +44,8 @@ format or automatic installation detector.
 ## One signed release, multiple kinds
 
 Manifest schema 1 is retained. Artifact uniqueness is now the pair `(target,
-kind)`, instead of target alone. Publish one `files` ZIP and one `inno` ZIP for
-the same Rust target triple; the latter contains exactly one declared setup EXE.
+kind)`, instead of target alone. Publish one `files` ZIP and one direct `inno` EXE for
+the same Rust target triple; the latter uses signed `format: "raw"` metadata and exactly one declared setup EXE.
 Every artifact retains its own URL, size, SHA-256 and complete file inventory.
 Duplicate target/kind pairs are rejected. Kind is signed metadata, not a URL
 suffix or unsigned discovery hint. Product/channel/version/target policy still
@@ -56,13 +56,13 @@ Create each artifact with the actual release tool, merge before signing:
 ```powershell
 cargo build --release --locked --bin freshen-release
 target\release\freshen-release.exe pack target\portable-dist target\portable.zip https://updates.example.com/portable.zip x86_64-pc-windows-msvc files my-app 2.0.0 stable target\portable.json
-target\release\freshen-release.exe pack target\installer-dist target\installer.zip https://updates.example.com/installer.zip x86_64-pc-windows-msvc inno my-app 2.0.0 stable target\inno.json
+target\release\freshen-release.exe pack-inno target\Product-2.0.0.exe https://updates.example.com/Product-2.0.0.exe x86_64-pc-windows-msvc my-app 2.0.0 stable target\inno.json
 target\release\freshen-release.exe merge target\freshen-manifest.json target\portable.json target\inno.json
 target\release\freshen-release.exe sign C:\Signing\publisher.key target\freshen-manifest.json target\freshen-manifest.json.sig
 ```
 
 Here `target\portable-dist` contains only the app-owned portable files, and
-`target\installer-dist` contains only `setup.exe`. Replace the publisher's host,
+`target\Product-2.0.0.exe` is the original installer published at the signed URL. The manifest stages it as `setup.exe`; no ZIP is created. Replace the publisher's host,
 product and private-key path with your deployment settings; no distribution
 service or signing credential is created by these commands. Input notes must
 agree when merging; set notes before signing. Tools refuse to overwrite files.
@@ -107,3 +107,29 @@ history, ambiguity across releases, modified candidate metadata, mixed staging
 and recovery, real helper startup confirmation/rollback, the C boundary and
 publisher pack/merge/sign tools. The opt-in real Inno matrix includes a portable
 artifact first in each signed manifest and selects the Inno kind explicitly.
+
+
+## Direct installer migration
+
+The optional signed artifact field `format` defaults to `zip`. ZIP artifacts
+omit it when serialized, keeping existing manifests compatible. `raw` is
+accepted only for `inno` and binds exactly one installer to the artifact hash
+and size. The installation backend, identity checks, arguments, helper
+readiness, stage revalidation, telemetry and exit-code authority do not change.
+No format sniffing or automatic fallback is performed.
+
+Older readers reject unknown artifact fields. Ship a transitional release
+using the legacy Inno ZIP but built with the new reader, then switch subsequent
+releases to direct EXEs. A mixed manifest containing a raw Inno artifact is
+also unreadable by old portable readers. Once such a release is visible,
+old readers may fail the entire feed check rather than offer the transitional
+release; do not promise automatic multi-hop upgrades. Users who miss the
+transition need to install a current version manually, unless the publisher
+maintains a separate legacy feed. Keep old signed bytes unchanged.
+
+The legacy `pack ... inno ...` command remains available only
+for transitional or existing compatibility workflows, not new release guidance.
+
+Rust consumers constructing `Artifact` literals must now supply `format`
+(`PackageFormat::Zip` for existing archive fixtures). Serialized legacy
+manifests need no edits. C and other language ABI layouts are unchanged.

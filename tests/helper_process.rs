@@ -154,6 +154,7 @@ fn real_helper_commit_cancel_failure_and_timeout() {
         artifacts: vec![Artifact {
             target: "test-target".into(),
             kind: PackageKind::Files,
+            format: freshen::PackageFormat::Zip,
             url: "https://test.invalid/package".parse().unwrap(),
             sha256: hex::encode(Sha256::digest(&package)),
             size: package.len() as u64,

@@ -25,7 +25,7 @@ pub use install::{
 };
 pub use manifest::signing_message;
 pub use manifest::{
-    Artifact, PackageFile, PackageKind, ReleaseManifest, SignedManifest, TrustStore,
+    Artifact, PackageFile, PackageFormat, PackageKind, ReleaseManifest, SignedManifest, TrustStore,
 };
 pub use transport::{Cancellation, Event, HttpTransport, Transport};
 pub use updater::{

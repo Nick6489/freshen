@@ -33,6 +33,7 @@ pub(crate) fn manifest() -> ReleaseManifest {
         artifacts: vec![Artifact {
             target: "test-target".into(),
             kind: PackageKind::Files,
+            format: PackageFormat::Zip,
             url: "https://example.test/package.zip".parse().unwrap(),
             sha256: "0".repeat(64),
             size: 1,
@@ -650,4 +651,153 @@ fn github_discovery_excludes_drafts_prereleases_and_unsigned_releases() {
                 .is_none()
         );
     }
+}
+
+fn raw_inno_fixture() -> (Updater<MemoryTransport>, ReleaseSource) {
+    let (mut updater, source) = fixture("app.exe", b"new");
+    let mut release = manifest();
+    let artifact = &mut release.artifacts[0];
+    artifact.kind = PackageKind::Inno;
+    artifact.format = PackageFormat::Raw;
+    // Deliberately no .exe URL suffix: encoding is signed, not guessed.
+    artifact.url = "https://example.test/download".parse().unwrap();
+    artifact.files[0].path = "setup.exe".into();
+    artifact.size = 3;
+    artifact.sha256 = artifact.files[0].sha256.clone();
+    let signed = signed(&release);
+    let responses = Arc::make_mut(&mut updater.transport.0);
+    responses.insert("https://example.test/manifest".into(), signed.document);
+    responses.insert(
+        "https://example.test/signature".into(),
+        signed.signature.into_bytes(),
+    );
+    responses.insert("https://example.test/download".into(), b"new".to_vec());
+    (updater, source)
+}
+
+#[test]
+fn raw_inno_prepares_original_bytes_and_cleans_temporary_files() {
+    let (updater, source) = raw_inno_fixture();
+    let cancel = Cancellation::default();
+    let candidate = updater
+        .check_for_kind(&source, PackageKind::Inno, &cancel, &mut |_| {})
+        .unwrap()
+        .unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let mut events = Vec::new();
+    let prepared = updater
+        .prepare(candidate.clone(), temp.path(), &cancel, &mut |e| {
+            events.push(e)
+        })
+        .unwrap();
+    let stage = prepared.staged_directory().to_path_buf();
+    assert_eq!(fs::read(stage.join("setup.exe")).unwrap(), b"new");
+    assert_eq!(fs::read_dir(&stage).unwrap().count(), 1);
+    assert!(events.iter().any(|e| matches!(e, Event::Verifying)));
+    assert!(matches!(events.last(), Some(Event::Ready)));
+    assert!(!events.iter().any(|e| matches!(e, Event::Extracting { .. })));
+    drop(prepared);
+    assert!(!stage.exists());
+    // An in-memory encoding change must fail authenticated selection.
+    let mut tampered = candidate;
+    tampered.artifact.format = PackageFormat::Zip;
+    assert!(matches!(
+        updater.prepare(tampered, temp.path(), &cancel, &mut |_| {}),
+        Err(Error::Invalid(_))
+    ));
+}
+
+#[test]
+fn raw_inno_rejects_corruption_truncation_limits_and_cancellation() {
+    for bytes in [b"bad".as_slice(), b"ne".as_slice(), b"new!".as_slice()] {
+        let (mut updater, source) = raw_inno_fixture();
+        let cancel = Cancellation::default();
+        let candidate = updater
+            .check_for_kind(&source, PackageKind::Inno, &cancel, &mut |_| {})
+            .unwrap()
+            .unwrap();
+        Arc::make_mut(&mut updater.transport.0)
+            .insert("https://example.test/download".into(), bytes.to_vec());
+        let temp = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            updater.prepare(candidate, temp.path(), &cancel, &mut |_| {}),
+            Err(Error::HashMismatch(_) | Error::SizeLimit)
+        ));
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0);
+    }
+    let (mut updater, source) = raw_inno_fixture();
+    let cancel = Cancellation::default();
+    let candidate = updater
+        .check_for_kind(&source, PackageKind::Inno, &cancel, &mut |_| {})
+        .unwrap()
+        .unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    updater.max_unpacked = 2;
+    assert!(matches!(
+        updater.prepare(candidate.clone(), temp.path(), &cancel, &mut |_| {}),
+        Err(Error::SizeLimit)
+    ));
+    updater.max_unpacked = 1024;
+    updater.max_download = 2;
+    assert!(matches!(
+        updater.prepare(candidate.clone(), temp.path(), &cancel, &mut |_| {}),
+        Err(Error::SizeLimit)
+    ));
+    updater.max_download = 1024;
+    let during_verify = cancel.clone();
+    assert!(matches!(
+        updater.prepare(candidate, temp.path(), &cancel, &mut |e| {
+            if matches!(e, Event::Verifying) {
+                during_verify.cancel();
+            }
+        }),
+        Err(Error::Cancelled)
+    ));
+    assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn encoding_defaults_to_legacy_zip_and_raw_is_strictly_validated() {
+    let release = manifest();
+    let json = serde_json::to_value(&release).unwrap();
+    assert!(json["artifacts"][0].get("format").is_none());
+    let decoded: ReleaseManifest = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(decoded.artifacts[0].format, PackageFormat::Zip);
+    let mut unknown = json;
+    unknown["artifacts"][0]["format"] = "guess".into();
+    assert!(serde_json::from_value::<ReleaseManifest>(unknown).is_err());
+    let (updater, _) = raw_inno_fixture();
+    let document = updater
+        .transport
+        .0
+        .get("https://example.test/manifest")
+        .unwrap();
+    let raw: ReleaseManifest = serde_json::from_slice(document).unwrap();
+    assert!(raw.validate().is_ok());
+    for kind in [PackageKind::Files, PackageKind::MacBundle] {
+        let mut bad = raw.clone();
+        bad.artifacts[0].kind = kind;
+        assert!(bad.validate().is_err());
+    }
+    for mutation in 0..5 {
+        let mut bad = raw.clone();
+        let a = &mut bad.artifacts[0];
+        match mutation {
+            0 => a.files[0].size += 1,
+            1 => a.files[0].sha256 = "0".repeat(64),
+            2 => a.files.push(a.files[0].clone()),
+            3 => a.files[0].path = "../setup.exe".into(),
+            _ => a.files[0].path = "setup.txt".into(),
+        }
+        assert!(bad.validate().is_err());
+    }
+    // The format itself is protected by the publisher signature.
+    let mut authenticated = signed(&raw);
+    let mut changed: serde_json::Value = serde_json::from_slice(&authenticated.document).unwrap();
+    changed["artifacts"][0]["format"] = "zip".into();
+    authenticated.document = serde_json::to_vec(&changed).unwrap();
+    assert!(matches!(
+        trust().verify(&authenticated),
+        Err(Error::Signature)
+    ));
 }

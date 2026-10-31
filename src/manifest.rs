@@ -16,7 +16,7 @@ pub const SIGNING_DOMAIN: &[u8] = b"freshen-manifest-v1\0";
 pub enum PackageKind {
     Files,
     MacBundle,
-    /// ZIP containing exactly one signed Inno Setup executable.
+    /// Inno Setup executable, directly downloaded or inside a legacy ZIP.
     Inno,
 }
 
@@ -31,16 +31,36 @@ pub struct PackageFile {
     pub executable: bool,
 }
 
+/// Signed payload encoding, independent of the installation backend.
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PackageFormat {
+    /// Default for existing manifests. New Inno releases should use Raw.
+    #[default]
+    Zip,
+    /// Exactly one Inno installer; downloaded bytes are the staged file.
+    Raw,
+}
+
+impl PackageFormat {
+    fn is_zip(&self) -> bool {
+        *self == Self::Zip
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
     /// Exact Rust target triple. The host selects its distribution target explicitly.
     pub target: String,
     pub kind: PackageKind,
+    /// Authenticated encoding. Omitted for legacy ZIPs; raw is Inno-only.
+    #[serde(default, skip_serializing_if = "PackageFormat::is_zip")]
+    pub format: PackageFormat,
     pub url: Url,
     pub sha256: String,
     pub size: u64,
-    /// Complete list of regular files inside the ZIP, including bundle prefixes.
+    /// Complete staged inventory: ZIP entries (including bundle prefixes), or one raw installer.
     pub files: Vec<PackageFile>,
 }
 
@@ -72,6 +92,19 @@ impl ReleaseManifest {
             {
                 return Err(Error::Invalid(
                     "Inno packages require exactly one installer .exe".into(),
+                ));
+            }
+            if artifact.format == PackageFormat::Raw
+                && (artifact.kind != PackageKind::Inno
+                    || artifact.files.len() != 1
+                    || artifact.files[0].size != artifact.size
+                    || !artifact.files[0]
+                        .sha256
+                        .eq_ignore_ascii_case(&artifact.sha256))
+            {
+                return Err(Error::Invalid(
+                    "raw payloads require one Inno installer matching the artifact hash and size"
+                        .into(),
                 ));
             }
             if artifact.target.is_empty() || !targets.insert((&artifact.target, artifact.kind)) {

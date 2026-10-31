@@ -105,9 +105,9 @@ fn servicing_parent() {
         )
         .unwrap()
         .unwrap();
-    let prepared = updater
+    let mut prepared = updater
         .prepare(
-            candidate,
+            candidate.clone(),
             scenario.state.parent().unwrap(),
             &cancel,
             &mut |_| {},
@@ -128,6 +128,39 @@ fn servicing_parent() {
         exit_timeout_secs: 30,
         confirmation_timeout_secs: 30,
     };
+    if candidate.artifact().format == PackageFormat::Raw {
+        for extra_file in [false, true] {
+            if extra_file {
+                fs::write(
+                    prepared.staged_directory().join("unsigned.exe"),
+                    b"unsigned",
+                )
+                .unwrap();
+            } else {
+                let path = prepared.staged_directory().join("setup.exe");
+                let mut bytes = fs::read(&path).unwrap();
+                bytes[0] ^= 1;
+                fs::write(path, bytes).unwrap();
+            }
+            let result = prepared.arm(
+                policy.clone(),
+                Path::new(env!("CARGO_BIN_EXE_freshen-helper")),
+                vec![],
+            );
+            assert!(
+                matches!(result, Err(Error::HashMismatch(_) | Error::Invalid(_))),
+                "tampered raw staging must fail before helper launch"
+            );
+            prepared = updater
+                .prepare(
+                    candidate.clone(),
+                    scenario.state.parent().unwrap(),
+                    &cancel,
+                    &mut |_| {},
+                )
+                .unwrap();
+        }
+    }
     let handoff = prepared
         .arm(
             policy,
@@ -235,7 +268,13 @@ Source: "{output}\payload.bin"; DestDir: "{{app}}"; Flags: ignoreversion
     directory.join(format!("fixture-{version}-{mode}.exe"))
 }
 
-fn run_update(directory: &Path, installer: &Path, app_id: &str, enhanced: bool) -> inno::Status {
+fn run_update(
+    directory: &Path,
+    installer: &Path,
+    app_id: &str,
+    enhanced: bool,
+    raw: bool,
+) -> inno::Status {
     let state = directory.join("state");
     fs::create_dir_all(&state).unwrap();
     let package = directory.join("package.zip");
@@ -245,9 +284,10 @@ fn run_update(directory: &Path, installer: &Path, app_id: &str, enhanced: bool) 
         .unwrap();
     zip.write_all(&bytes).unwrap();
     zip.finish().unwrap();
-    let artifact = Artifact {
+    let mut artifact = Artifact {
         target: "test-windows".into(),
         kind: PackageKind::Inno,
+        format: freshen::PackageFormat::Zip,
         url: "https://fixture.invalid/package".parse().unwrap(),
         sha256: hex::encode(Sha256::digest(fs::read(&package).unwrap())),
         size: fs::metadata(&package).unwrap().len(),
@@ -258,6 +298,12 @@ fn run_update(directory: &Path, installer: &Path, app_id: &str, enhanced: bool) 
             executable: true,
         }],
     };
+    if raw {
+        artifact.format = PackageFormat::Raw;
+        artifact.sha256 = artifact.files[0].sha256.clone();
+        artifact.size = artifact.files[0].size;
+        fs::write(&package, &bytes).unwrap();
+    }
     let mut release = ReleaseManifest {
         schema: 1,
         product: "inno-test".into(),
@@ -268,6 +314,7 @@ fn run_update(directory: &Path, installer: &Path, app_id: &str, enhanced: bool) 
     };
     let mut portable = release.artifacts[0].clone();
     portable.kind = PackageKind::Files;
+    portable.format = PackageFormat::Zip;
     portable.files[0].path = "portable.exe".into();
     release.artifacts.insert(0, portable);
     let document = serde_json::to_vec(&release).unwrap();
@@ -386,70 +433,72 @@ fn real_install_update_basic_enhanced_failure_reboot_and_mismatched_dll() {
         fs::read_to_string(directory.join("installed/version.txt")).unwrap(),
         "1.0.0"
     );
-    for (mode, dll) in [
-        ("basic", &dll),
-        ("enhanced", &dll),
-        ("failure", &dll),
-        ("reboot", &dll),
-        ("mismatch", &wrong_dll),
-        ("disconnect", &dll),
-        ("overdue", &dll),
-        ("locked", &dll),
-    ] {
-        let installer = compile(
-            &compiler, directory, &app_id, "2.0.0", mode, dll, native_x64,
-        );
-        use std::os::windows::fs::OpenOptionsExt;
-        let held_file = (mode == "locked").then(|| {
-            fs::OpenOptions::new()
-                .read(true)
-                .share_mode(1)
-                .open(directory.join("installed/version.txt"))
-                .unwrap()
-        });
-        let status = run_update(directory, &installer, &app_id, mode != "basic");
-        drop(held_file);
-        if mode == "locked" {
-            assert_ne!(
-                status.exit_code,
-                Some(0),
-                "locked file must not report successful replacement: {status:?}"
+    for raw in [false, true] {
+        for (mode, dll) in [
+            ("basic", &dll),
+            ("enhanced", &dll),
+            ("failure", &dll),
+            ("reboot", &dll),
+            ("mismatch", &wrong_dll),
+            ("disconnect", &dll),
+            ("overdue", &dll),
+            ("locked", &dll),
+        ] {
+            let installer = compile(
+                &compiler, directory, &app_id, "2.0.0", mode, dll, native_x64,
             );
-            continue;
-        }
-        assert_eq!(
-            status.exit_code,
-            Some(match mode {
-                "failure" => 7,
-                "reboot" => 3010,
-                _ => 0,
-            }),
-            "{status:?}"
-        );
-        if mode == "enhanced" {
-            assert!(
-                status.telemetry_observed && status.progress_observed,
+            use std::os::windows::fs::OpenOptionsExt;
+            let held_file = (mode == "locked").then(|| {
+                fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(1)
+                    .open(directory.join("installed/version.txt"))
+                    .unwrap()
+            });
+            let status = run_update(directory, &installer, &app_id, mode != "basic", raw);
+            drop(held_file);
+            if mode == "locked" {
+                assert_ne!(
+                    status.exit_code,
+                    Some(0),
+                    "locked file must not report successful replacement: {status:?}"
+                );
+                continue;
+            }
+            assert_eq!(
+                status.exit_code,
+                Some(match mode {
+                    "failure" => 7,
+                    "reboot" => 3010,
+                    _ => 0,
+                }),
                 "{status:?}"
             );
+            if mode == "enhanced" {
+                assert!(
+                    status.telemetry_observed && status.progress_observed,
+                    "{status:?}"
+                );
+            }
+            if mode == "basic" || mode == "mismatch" {
+                assert!(!status.telemetry_observed);
+            }
+            if mode == "disconnect" {
+                assert!(!status.telemetry_connected);
+            }
+            if mode == "overdue" {
+                assert!(status.overdue);
+            }
+            if mode != "failure" {
+                assert_eq!(
+                    fs::read_to_string(directory.join("installed/version.txt")).unwrap(),
+                    "2.0.0"
+                );
+            }
+            // A single unchanged uninstall executable proves the same install is being serviced.
+            assert!(directory.join("installed/unins000.exe").exists());
+            assert!(!directory.join("installed/unins001.exe").exists());
         }
-        if mode == "basic" || mode == "mismatch" {
-            assert!(!status.telemetry_observed);
-        }
-        if mode == "disconnect" {
-            assert!(!status.telemetry_connected);
-        }
-        if mode == "overdue" {
-            assert!(status.overdue);
-        }
-        if mode != "failure" {
-            assert_eq!(
-                fs::read_to_string(directory.join("installed/version.txt")).unwrap(),
-                "2.0.0"
-            );
-        }
-        // A single unchanged uninstall executable proves the same install is being serviced.
-        assert!(directory.join("installed/unins000.exe").exists());
-        assert!(!directory.join("installed/unins001.exe").exists());
     }
     assert!(
         Command::new(directory.join("installed/unins000.exe"))

@@ -8,12 +8,21 @@ operations on a worker thread.
 
 ## Integration and public interfaces
 
-The signed manifest retains schema 1. `Artifact.kind = "inno"` means a ZIP with
-exactly one declared `.exe`, for example `setup.exe`. The existing release tool
-supports `pack ... inno ...`. Both the ZIP hash and installer inventory hash are
-verified using the existing pinned Ed25519 trust store, download limits and
-bounded extraction. An authenticated ZIP is retained through helper handoff;
-the helper checks the stage again before execution. Installer arguments are
+The signed manifest retains schema 1. New Inno releases use
+`Artifact.kind = "inno"` and `Artifact.format = "raw"`: the URL references the
+original setup EXE. Use `freshen-release pack-inno INSTALLER URL TARGET PRODUCT VERSION CHANNEL MANIFEST`.
+This writes metadata only; publish that same EXE for people and the updater.
+The single inventory entry is named `setup.exe` for local staging, independent
+of the download filename. Its size and SHA-256 must equal the artifact's size
+and SHA-256. Format is authenticated metadata, never inferred from the URL.
+
+Missing `format` means the legacy ZIP encoding, still supported for existing
+releases. New publications should not wrap installers in ZIPs. Both encodings
+use the existing pinned Ed25519 trust store and bounded downloads; raw payloads
+also respect the staging-size limit. Raw bytes are verified before staging,
+and the helper checks the signed staged inventory again before execution.
+See [direct installer migration](distributions.md#direct-installer-migration)
+for the required reader-first transition. Installer arguments are
 local policy, never downloaded command lines.
 
 Use `InstallLayout::Inno(InnoPolicy { ... })`. Prefer `arm_current_exe` when
@@ -343,7 +352,7 @@ cargo test --locked --test inno_installer -- --ignored --nocapture
 
 Install Inno 6 with `winget install --id JRSoftware.InnoSetup --exact` if needed.
 The real suite builds installers into temporary directories, uses a unique
-per-user AppId, exercises the signed ZIP and parent/helper handoff, and
+per-user AppId, exercises both signed direct installers and legacy ZIPs through parent/helper handoff, and
 uninstalls on successful completion. A failed test can leave its test AppId
 registration and installer processes behind; inspect and stop them before
 cleanup. No suite exercises a production application or machine-wide install.

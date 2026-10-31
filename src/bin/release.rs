@@ -10,14 +10,16 @@ use std::{
 
 const USAGE: &str = "freshen-release keygen PRIVATE_KEY PUBLIC_KEY\n\
 freshen-release pack DIRECTORY ZIP URL TARGET files|mac_bundle|inno PRODUCT VERSION CHANNEL MANIFEST\n\
+freshen-release pack-inno INSTALLER URL TARGET PRODUCT VERSION CHANNEL MANIFEST\n\
 freshen-release merge OUTPUT_MANIFEST INPUT_MANIFEST...\n\
 freshen-release sign PRIVATE_KEY MANIFEST SIGNATURE\n\n\
 freshen-release recover INSTALLATION_ROOT\n\n\
 freshen-release discard-finished INSTALLATION_ROOT\n\n\
 Keys and signatures use base64. Keep the private key outside your repository.\n\
-Pack writes a ZIP and a single-target manifest. Merge combines target manifests\n\
+Pack writes a ZIP and a single-target manifest; pack-inno references an existing EXE.\n\
+Merge combines target manifests\n\
 for the same release before signing. Publish freshen-manifest.json and\n\
-freshen-manifest.json.sig alongside the ZIP assets for GitHub discovery.";
+freshen-manifest.json.sig alongside the referenced ZIP/EXE assets for GitHub discovery.";
 
 fn main() -> std::process::ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -102,6 +104,7 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 artifacts: vec![Artifact {
                     target: args[4].clone(),
                     kind,
+                    format: freshen::PackageFormat::Zip,
                     url: args[3].parse()?,
                     sha256: "0".repeat(64),
                     size: 1,
@@ -126,6 +129,52 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             manifest.artifacts[0].size = fs::metadata(&args[2])?.len();
             write_new(&args[9], &serde_json::to_vec_pretty(&manifest)?)?;
             println!("Created package and unsigned manifest.");
+        }
+        Some("pack-inno") if args.len() == 8 => {
+            let installer = Path::new(&args[1]);
+            let metadata = fs::symlink_metadata(installer)?;
+            if !metadata.is_file() || metadata.file_type().is_symlink() {
+                return Err("installer must be a regular file".into());
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                if metadata.file_attributes() & 0x400 != 0 {
+                    return Err("reparse points cannot be packaged".into());
+                }
+            }
+            if !installer
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+            {
+                return Err("installer must have an .exe extension".into());
+            }
+            let sha256 = hash(installer)?;
+            let size = metadata.len();
+            let manifest = ReleaseManifest {
+                schema: 1,
+                product: args[4].clone(),
+                channel: args[6].clone(),
+                version: args[5].parse()?,
+                notes: String::new(),
+                artifacts: vec![Artifact {
+                    target: args[3].clone(),
+                    kind: PackageKind::Inno,
+                    format: freshen::PackageFormat::Raw,
+                    url: args[2].parse()?,
+                    sha256: sha256.clone(),
+                    size,
+                    files: vec![PackageFile {
+                        path: "setup.exe".into(),
+                        sha256,
+                        size,
+                        executable: true,
+                    }],
+                }],
+            };
+            manifest.validate()?;
+            write_new(&args[7], &serde_json::to_vec_pretty(&manifest)?)?;
+            println!("Created unsigned manifest for the original installer; no ZIP was produced.");
         }
         Some("merge") if args.len() >= 3 => {
             let mut output: ReleaseManifest = serde_json::from_slice(&fs::read(&args[2])?)?;

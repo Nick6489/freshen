@@ -177,7 +177,7 @@ fn main() -> freshen::Result<()> {
 ## Installation and recovery
 
 For existing Windows applications installed by Inno Setup, use the optional
-[Inno servicing backend](docs/inno.md). It reuses signed ZIP preparation and
+[Inno servicing backend](docs/inno.md). It reuses authenticated preparation, staging and
 helper readiness, runs an ordinary installer silently, and optionally receives
 real progress through `FreshenInno.dll` and `FreshenInno.iss`. Inno owns its own
 installation and repair; the file-replacement rollback and startup-confirmation
@@ -212,6 +212,7 @@ Build the tools with `cargo build --release --bins`. The release tool provides:
 ```text
 freshen-release keygen PRIVATE_KEY PUBLIC_KEY
 freshen-release pack DIRECTORY ZIP URL TARGET files|mac_bundle PRODUCT VERSION CHANNEL MANIFEST
+freshen-release pack-inno INSTALLER URL TARGET PRODUCT VERSION CHANNEL MANIFEST
 freshen-release merge OUTPUT_MANIFEST INPUT_MANIFEST...
 freshen-release sign PRIVATE_KEY MANIFEST SIGNATURE
 ```
@@ -225,7 +226,9 @@ freshen-release pack dist MyApp-windows.zip https://github.com/your-account/your
 freshen-release sign /private/location/publisher.key freshen-manifest.json freshen-manifest.json.sig
 ```
 
-For multiple targets, generate separate manifests, merge them, then sign the combined manifest once. Add release notes before signing. Publish `freshen-manifest.json`, `freshen-manifest.json.sig`, and referenced ZIPs on the GitHub release. Signing uses Ed25519 over `freshen-manifest-v1\0` followed by the exact manifest bytes; changing whitespace after signing invalidates the signature.
+For multiple targets, generate separate manifests, merge them, then sign the combined manifest once. Add release notes before signing. For new Inno releases, use `pack-inno` to reference the original setup EXE directly; do not publish an installer wrapper ZIP. Existing Inno ZIP manifests remain readable. See the [distribution migration guidance](docs/distributions.md#direct-installer-migration) before switching an existing feed.
+
+Publish `freshen-manifest.json`, `freshen-manifest.json.sig`, and referenced ZIP/EXE assets on the GitHub release. Signing uses Ed25519 over `freshen-manifest-v1\0` followed by the exact manifest bytes; changing whitespace after signing invalidates the signature.
 
 GitHub discovery examines the first 100 releases. Drafts are ignored; stable-channel discovery also ignores prereleases. Selection uses the signed product, channel, semantic version, and target, not the GitHub tag. Releases lacking the manifest/signature pair are skipped. An invalid signature or failed fetch is an error, not an "up to date" result. Only versions newer than the configured current version qualify.
 

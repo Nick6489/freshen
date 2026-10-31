@@ -1,4 +1,4 @@
-//! Inno servicing through the existing signed ZIP, staging and helper lifecycle.
+//! Inno servicing through signed direct installers (or legacy ZIPs), staging and helper lifecycle.
 //!
 //! See `docs/inno.md`. Blocking operations belong on worker threads. Inno owns
 //! installation and repair; Freshen never attempts file-level rollback for it.

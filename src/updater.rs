@@ -314,8 +314,8 @@ impl<T: Transport> Updater<T> {
         let temporary = tempfile::Builder::new()
             .prefix("freshen-")
             .tempdir_in(temporary_parent)?;
-        let zip = temporary.path().join("package.zip");
-        let mut output = File::create(&zip)?;
+        let payload = temporary.path().join("payload");
+        let mut output = File::create(&payload)?;
         self.transport.download(
             &candidate.artifact.url,
             &mut output,
@@ -327,21 +327,46 @@ impl<T: Transport> Updater<T> {
         drop(output);
         cancel.check()?;
         events(Event::Verifying);
-        if fs::metadata(&zip)?.len() != candidate.artifact.size
-            || !hash_file(&zip)?.eq_ignore_ascii_case(&candidate.artifact.sha256)
+        if fs::metadata(&payload)?.len() != candidate.artifact.size
+            || !hash_file(&payload)?.eq_ignore_ascii_case(&candidate.artifact.sha256)
         {
-            return Err(Error::HashMismatch("package.zip".into()));
+            return Err(Error::HashMismatch("payload".into()));
         }
         let stage = temporary.path().join("stage");
         fs::create_dir(&stage)?;
-        extract(
-            &zip,
-            &stage,
-            &candidate.artifact,
-            self.max_unpacked,
-            cancel,
-            events,
-        )?;
+        if candidate.artifact.format == crate::PackageFormat::Raw {
+            // Manifest validation binds the single installer inventory entry to
+            // these exact downloaded bytes. Never infer encoding from a URL.
+            let file = &candidate.artifact.files[0];
+            if file.size > self.max_unpacked {
+                return Err(Error::SizeLimit);
+            }
+            cancel.check()?;
+            let target = stage.join(&file.path);
+            fs::create_dir_all(
+                target
+                    .parent()
+                    .ok_or_else(|| Error::Invalid("installer has no parent".into()))?,
+            )?;
+            fs::rename(&payload, &target)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(
+                    &target,
+                    fs::Permissions::from_mode(if file.executable { 0o755 } else { 0o644 }),
+                )?;
+            }
+        } else {
+            extract(
+                &payload,
+                &stage,
+                &candidate.artifact,
+                self.max_unpacked,
+                cancel,
+                events,
+            )?;
+        }
         events(Event::Ready);
         Ok(PreparedUpdate {
             temporary,
