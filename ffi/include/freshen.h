@@ -88,6 +88,9 @@
 
 #define FRESHEN_STATE_FAILED 7
 
+// Inno completed and requires a reboot.
+#define FRESHEN_STATE_REBOOT_REQUIRED 8
+
 // A state this ABI version does not know; read the detail text.
 #define FRESHEN_STATE_UNKNOWN 100
 
@@ -121,7 +124,7 @@
 // A signed macOS application bundle.
 #define FRESHEN_PACKAGE_MAC_BUNDLE 2
 
-// An authenticated Inno installer payload (Rust hosts expose Inno arming).
+// An authenticated Inno installer payload.
 #define FRESHEN_PACKAGE_INNO 3
 
 // `FreshenSource.kind`: `a` is the URL of a JSON index of manifest locations.
@@ -181,6 +184,21 @@ typedef struct FreshenInstallPolicy {
   // Seconds to wait for the new version to confirm startup; 0 keeps the default (120).
   uint64_t confirmation_timeout_secs;
 } FreshenInstallPolicy;
+
+// Explicit local Inno policy. `state_root` must be separate from the application directory.
+typedef struct FreshenInnoPolicy {
+  size_t struct_size;
+  const char *state_root;
+  const char *installer;
+  const char *app_id;
+  const char *directory;
+  const char *executable;
+  bool machine_wide;
+  bool enhanced;
+  uint64_t timeout_secs;
+  bool relaunch;
+  uint64_t exit_timeout_secs;
+} FreshenInnoPolicy;
 
 // Host download callback. Fetch `url` and pass every byte to `sink` with
 // `freshen_sink_write`. Return 0 on success or a nonzero status (for example
@@ -286,6 +304,23 @@ int32_t freshen_arm(struct FreshenPrepared *prepared,
                     const char *const *relaunch_args,
                     size_t relaunch_arg_count,
                     struct FreshenHandoff **out_handoff);
+
+// Arm an Inno update using locally configured policy. Consumes `prepared` on
+// success or failure. Other arguments follow `freshen_arm`.
+// # Safety
+// All pointers must be valid as documented for `freshen_arm` and this policy.
+int32_t freshen_arm_inno(struct FreshenPrepared *prepared,
+                         const struct FreshenInnoPolicy *policy,
+                         const char *helper_executable,
+                         const char *const *relaunch_args,
+                         size_t relaunch_arg_count,
+                         struct FreshenHandoff **out_handoff);
+
+// Durable Inno status as UTF-8 JSON, or null when absent. Free the result
+// with `freshen_string_free`. Fields match Rust's `freshen::inno::Status`.
+// # Safety
+// `root` must be a valid UTF-8 string and `out_json` must be writable.
+int32_t freshen_inno_status(const char *root, char **out_json);
 
 // Process id of the waiting helper, or 0 if the handle is null or cancelled.
 //

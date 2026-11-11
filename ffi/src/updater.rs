@@ -34,7 +34,7 @@ pub const FRESHEN_PACKAGE_AUTO: i32 = 0;
 pub const FRESHEN_PACKAGE_FILES: i32 = 1;
 /// A signed macOS application bundle.
 pub const FRESHEN_PACKAGE_MAC_BUNDLE: i32 = 2;
-/// An authenticated Inno installer payload (Rust hosts expose Inno arming).
+/// An authenticated Inno installer payload.
 pub const FRESHEN_PACKAGE_INNO: i32 = 3;
 
 const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 300;

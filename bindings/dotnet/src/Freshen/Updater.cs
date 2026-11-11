@@ -104,7 +104,8 @@ public sealed unsafe class Updater : IDisposable
     public Candidate? Check(
         ReleaseSource source,
         IProgress<UpdateProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        PackageKind packageKind = PackageKind.Auto)
     {
         ArgumentNullException.ThrowIfNull(source);
         cancellationToken.ThrowIfCancellationRequested();
@@ -115,9 +116,10 @@ public sealed unsafe class Updater : IDisposable
         using var progressState = new ProgressBinding(progress);
 
         nint candidate;
-        int status = NativeMethods.freshen_check(
+        int status = NativeMethods.freshen_check_for_kind(
             operation.Raw,
             &native,
+            (int)packageKind,
             cancel.Raw,
             progressState.Callback,
             progressState.User,
@@ -130,8 +132,9 @@ public sealed unsafe class Updater : IDisposable
     public Task<Candidate?> CheckAsync(
         ReleaseSource source,
         IProgress<UpdateProgress>? progress = null,
-        CancellationToken cancellationToken = default) =>
-        Task.Run(() => Check(source, progress, cancellationToken), cancellationToken);
+        CancellationToken cancellationToken = default,
+        PackageKind packageKind = PackageKind.Auto) =>
+        Task.Run(() => Check(source, progress, cancellationToken, packageKind), cancellationToken);
 
     /// <summary>
     /// Downloads, verifies and extracts a candidate into a private directory beneath

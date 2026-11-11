@@ -50,7 +50,7 @@ Modified existing files:
   changing struct/handle layouts or existing function signatures.
 - `src/bin/release.rs`: `pack ... inno ...` support and help text.
 - `ffi/src/install.rs`: preserve old ABI by mapping the new reboot state to
-  UNKNOWN; existing binding policy structs do not expose Inno arming yet.
+  UNKNOWN in older bindings; additive C, C++ and .NET APIs now expose Inno arming.
 - `.github/workflows/ci.yml`: build both DLLs and run the x86 native ABI tests
   on the Windows job.
 - `README.md`, `TESTING.md`: integration links, corrected support boundaries

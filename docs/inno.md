@@ -90,10 +90,20 @@ only to the existing file/bundle backend. Inno success does not prove applicatio
 startup health. `relaunch_args` are passed directly to an optional normal-user
 relaunch and never to the installer.
 
-The existing C, C++, .NET and Objective-C installation policy ABIs do not yet
-expose Inno arming. This addition is available to Rust hosts. Old C status
-consumers map `RebootRequired` to their existing UNKNOWN state and must read the
-detail text. The separate bridge ABI below is specifically for Pascal Script.
+C, C++ and .NET hosts can arm with an explicit local Inno policy and poll the
+durable status through the Rust C ABI. The Objective-C wrapper does not expose
+Inno arming. The C status code for reboot required is 8; older consumers may
+treat it as unknown and should read the detail text. The separate bridge ABI
+below is specifically for Pascal Script.
+
+C callers use `freshen_check_for_kind(..., FRESHEN_PACKAGE_INNO, ...)`, then
+`freshen_arm_inno` with `FreshenInnoPolicy`. C++ callers use
+`PackageKind::Inno` and `PreparedUpdate::try_arm_inno` (or `arm_inno`). .NET
+callers pass `PackageKind.Inno` to `Check` or `CheckAsync`, then call
+`ArmInno` or `ArmInnoAsync`. Poll `freshen_inno_status`,
+`freshen::host::try_inno_status_json`, or `FreshenHost.GetInnoStatusJson` from
+a process that survives the update. The returned JSON has the fields of the
+Rust `Status` described below, including nullable progress and exit code.
 
 ## Helper lifecycle and outcomes
 

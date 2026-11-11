@@ -160,6 +160,9 @@ public enum InstallState
 
     /// <summary>The update failed and recovery material was kept. See <see cref="FreshenHost.RecoverInstallation"/>.</summary>
     Failed = 7,
+
+    /// <summary>Inno completed and requires a reboot.</summary>
+    RebootRequired = 8,
 }
 
 /// <summary>The last installation transaction under an installation root.</summary>
@@ -259,4 +262,32 @@ public sealed class InstallPolicy
             TeamId = teamId,
         };
     }
+}
+
+/// <summary>Explicit artifact kind for a copy of an application.</summary>
+public enum PackageKind { Auto = 0, Files = 1, MacBundle = 2, Inno = 3 }
+
+/// <summary>Local Inno ownership policy; never populate from a downloaded manifest.</summary>
+public sealed class InnoPolicy
+{
+    /// <summary>Writable servicing directory outside the installed application tree.</summary>
+    public required string StateRoot { get; init; }
+    /// <summary>Exact installer path in the signed inventory.</summary>
+    public required string Installer { get; init; }
+    /// <summary>Existing Inno AppId.</summary>
+    public required string AppId { get; init; }
+    /// <summary>Existing installation directory.</summary>
+    public required string Directory { get; init; }
+    /// <summary>Relative installed executable for optional relaunch.</summary>
+    public required string Executable { get; init; }
+    /// <summary>Require machine-wide registration and elevation.</summary>
+    public bool MachineWide { get; init; }
+    /// <summary>Offer optional progress telemetry.</summary>
+    public bool Enhanced { get; init; }
+    /// <summary>Overdue warning threshold in seconds, from 1 to 86400.</summary>
+    public ulong TimeoutSeconds { get; init; } = 3600;
+    /// <summary>Relaunch after successful installation.</summary>
+    public bool Relaunch { get; init; }
+    /// <summary>Seconds to wait for shutdown; zero uses the default.</summary>
+    public ulong ExitTimeoutSeconds { get; init; }
 }

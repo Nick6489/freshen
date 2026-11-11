@@ -87,6 +87,16 @@ public static unsafe class FreshenHost
         ErrorMapper.ThrowIfError(NativeMethods.freshen_discard_finished_installation(strings.Add(installationRoot, nameof(installationRoot))));
     }
 
+    /// <summary>Returns the durable Inno status JSON, or null if no status exists. Poll from a surviving process.</summary>
+    public static string? GetInnoStatusJson(string stateRoot)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(stateRoot);
+        using var strings = new NativeStrings();
+        byte* json = null;
+        ErrorMapper.ThrowIfError(NativeMethods.freshen_inno_status(strings.Add(stateRoot, nameof(stateRoot)), &json));
+        return NativeMethods.TakeString(json);
+    }
+
     private static InstallationStatus? Status(string installationRoot, bool recover)
     {
         ArgumentException.ThrowIfNullOrEmpty(installationRoot);

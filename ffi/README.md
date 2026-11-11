@@ -119,3 +119,14 @@ installation needs a signed bundle and is checked manually.
 See [testing and integration](../TESTING.md) for the coverage matrix, application
 acceptance checks, and deferred review findings, including the status-output error
 path leak.
+
+## Inno-installed applications
+
+Use explicit Inno package-kind selection for mixed feeds and configure the local
+Inno policy with the existing AppId, installation directory, installer inventory
+path, executable and a writable state root outside the application directory.
+The signed manifest must never supply this local policy. Arm using the Inno
+entry point, save work and exit after helper readiness, and poll durable Inno
+status from a surviving process. Inno owns repair; Freshen does not roll back
+installer changes. See [the Inno guide](../docs/inno.md) for security and
+lifecycle details. Deploy the matching Rust-built native library.

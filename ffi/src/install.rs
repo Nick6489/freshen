@@ -30,6 +30,8 @@ pub const FRESHEN_STATE_COMMITTED: i32 = 4;
 pub const FRESHEN_STATE_ROLLING_BACK: i32 = 5;
 pub const FRESHEN_STATE_ROLLED_BACK: i32 = 6;
 pub const FRESHEN_STATE_FAILED: i32 = 7;
+/// Inno completed and requires a reboot.
+pub const FRESHEN_STATE_REBOOT_REQUIRED: i32 = 8;
 /// A state this ABI version does not know; read the detail text.
 pub const FRESHEN_STATE_UNKNOWN: i32 = 100;
 
@@ -152,6 +154,96 @@ pub unsafe extern "C" fn freshen_arm(
     })
 }
 
+/// Explicit local Inno policy. `state_root` must be separate from the application directory.
+#[repr(C)]
+pub struct FreshenInnoPolicy {
+    pub struct_size: usize,
+    pub state_root: *const c_char,
+    pub installer: *const c_char,
+    pub app_id: *const c_char,
+    pub directory: *const c_char,
+    pub executable: *const c_char,
+    pub machine_wide: bool,
+    pub enhanced: bool,
+    pub timeout_secs: u64,
+    pub relaunch: bool,
+    pub exit_timeout_secs: u64,
+}
+
+/// Arm an Inno update using locally configured policy. Consumes `prepared` on
+/// success or failure. Other arguments follow `freshen_arm`.
+/// # Safety
+/// All pointers must be valid as documented for `freshen_arm` and this policy.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn freshen_arm_inno(
+    prepared: *mut FreshenPrepared,
+    policy: *const FreshenInnoPolicy,
+    helper_executable: *const c_char,
+    relaunch_args: *const *const c_char,
+    relaunch_arg_count: usize,
+    out_handoff: *mut *mut FreshenHandoff,
+) -> i32 {
+    run(|| {
+        unsafe { store(out_handoff, ptr::null_mut(), "out_handoff") }?;
+        let prepared = unsafe { handle_mut(prepared, "prepared") }?;
+        let update = prepared
+            .0
+            .take()
+            .ok_or_else(|| invalid("prepared update was already consumed"))?;
+        let p = unsafe { policy.as_ref() }.ok_or_else(|| invalid("policy must not be null"))?;
+        if p.struct_size < size_of::<FreshenInnoPolicy>() {
+            return Err(invalid("policy.struct_size is too small"));
+        }
+        let root = PathBuf::from(unsafe { cstr(p.state_root, "state_root") }?);
+        let mut built = InstallPolicy::portable(root, String::new(), Vec::new());
+        built.layout = InstallLayout::Inno(freshen::inno::InnoPolicy {
+            installer: unsafe { cstr(p.installer, "installer") }?.to_owned(),
+            app_id: unsafe { cstr(p.app_id, "app_id") }?.to_owned(),
+            directory: PathBuf::from(unsafe { cstr(p.directory, "directory") }?),
+            executable: unsafe { cstr(p.executable, "executable") }?.to_owned(),
+            machine_wide: p.machine_wide,
+            enhanced: p.enhanced,
+            timeout_secs: p.timeout_secs,
+            relaunch: p.relaunch,
+        });
+        if p.exit_timeout_secs != 0 {
+            built.exit_timeout_secs = p.exit_timeout_secs;
+        }
+        let helper = unsafe { cstr(helper_executable, "helper_executable") }?;
+        let args = unsafe { cstr_list(relaunch_args, relaunch_arg_count, "relaunch_args") }?;
+        let handoff = update
+            .arm(built, Path::new(helper), args)
+            .map_err(|e| fail(&e))?;
+        unsafe {
+            store(
+                out_handoff,
+                Box::into_raw(Box::new(FreshenHandoff(Some(handoff)))),
+                "out_handoff",
+            )
+        }
+    })
+}
+
+/// Durable Inno status as UTF-8 JSON, or null when absent. Free the result
+/// with `freshen_string_free`. Fields match Rust's `freshen::inno::Status`.
+/// # Safety
+/// `root` must be a valid UTF-8 string and `out_json` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn freshen_inno_status(
+    root: *const c_char,
+    out_json: *mut *mut c_char,
+) -> i32 {
+    run(|| {
+        unsafe { store(out_json, ptr::null_mut(), "out_json") }?;
+        let root = unsafe { cstr(root, "root") }?;
+        if let Some(status) = freshen::inno::status(Path::new(root)).map_err(|e| fail(&e))? {
+            let json = serde_json::to_string(&status).map_err(|e| invalid(&e.to_string()))?;
+            unsafe { store(out_json, to_c_string(&json), "out_json") }?;
+        }
+        Ok(())
+    })
+}
+
 /// Process id of the waiting helper, or 0 if the handle is null or cancelled.
 ///
 /// # Safety
@@ -203,7 +295,7 @@ fn state_code(state: &InstallState) -> i32 {
         InstallState::RollingBack => FRESHEN_STATE_ROLLING_BACK,
         InstallState::RolledBack => FRESHEN_STATE_ROLLED_BACK,
         InstallState::Failed => FRESHEN_STATE_FAILED,
-        InstallState::RebootRequired => FRESHEN_STATE_UNKNOWN,
+        InstallState::RebootRequired => FRESHEN_STATE_REBOOT_REQUIRED,
     }
 }
 

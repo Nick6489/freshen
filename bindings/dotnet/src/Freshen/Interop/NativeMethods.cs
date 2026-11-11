@@ -67,6 +67,12 @@ internal static unsafe partial class NativeMethods
         nint* candidate);
 
     [LibraryImport(Library)]
+    internal static partial int freshen_check_for_kind(nint updater, NativeSource* source, int kind, nint cancel, delegate* unmanaged[Cdecl]<nint, int, ulong, ulong, byte*, void> onEvent, nint user, nint* candidate);
+
+    [LibraryImport(Library)] internal static partial int freshen_arm_inno(nint prepared, NativeInnoPolicy* policy, byte* helper, byte** args, nuint count, nint* handoff);
+    [LibraryImport(Library)] internal static partial int freshen_inno_status(byte* root, byte** json);
+
+    [LibraryImport(Library)]
     internal static partial int freshen_prepare(
         nint updater,
         nint candidate,

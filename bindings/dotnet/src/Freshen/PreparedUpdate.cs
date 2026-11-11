@@ -68,6 +68,32 @@ public sealed unsafe class PreparedUpdate : IDisposable
         return Handoff.FromNative(handoff);
     }
 
+    /// <summary>Arms an Inno installer with an explicitly configured local policy. Blocking.</summary>
+    public Handoff ArmInno(InnoPolicy policy, string helperExecutable, IEnumerable<string>? relaunchArguments = null)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        ArgumentException.ThrowIfNullOrEmpty(helperExecutable);
+        var arguments = relaunchArguments?.ToList() ?? new List<string>();
+        using var strings = new NativeStrings();
+        var native = new NativeInnoPolicy { StructSize = (nuint)sizeof(NativeInnoPolicy),
+            StateRoot = strings.Add(policy.StateRoot, nameof(policy.StateRoot)), Installer = strings.Add(policy.Installer, nameof(policy.Installer)),
+            AppId = strings.Add(policy.AppId, nameof(policy.AppId)), Directory = strings.Add(policy.Directory, nameof(policy.Directory)),
+            Executable = strings.Add(policy.Executable, nameof(policy.Executable)), MachineWide = policy.MachineWide ? (byte)1 : (byte)0,
+            Enhanced = policy.Enhanced ? (byte)1 : (byte)0, TimeoutSecs = policy.TimeoutSeconds,
+            Relaunch = policy.Relaunch ? (byte)1 : (byte)0, ExitTimeoutSecs = policy.ExitTimeoutSeconds };
+        byte* helper = strings.Add(helperExecutable, nameof(helperExecutable));
+        byte** args = strings.AddArray(arguments, nameof(relaunchArguments));
+        if (Interlocked.Exchange(ref _consumed, 1) != 0) throw new InvalidOperationException("This update was already armed.");
+        using var scope = new HandleScope(_handle);
+        nint handoff;
+        ErrorMapper.ThrowIfError(NativeMethods.freshen_arm_inno(scope.Raw, &native, helper, args, (nuint)arguments.Count, &handoff));
+        return Handoff.FromNative(handoff);
+    }
+
+    /// <summary>Arms an Inno update on a thread-pool thread.</summary>
+    public Task<Handoff> ArmInnoAsync(InnoPolicy policy, string helperExecutable, IEnumerable<string>? relaunchArguments = null) =>
+        Task.Run(() => ArmInno(policy, helperExecutable, relaunchArguments));
+
     /// <summary>Arms the update on a thread-pool thread.</summary>
     public Task<Handoff> ArmAsync(InstallPolicy policy, string helperExecutable, IEnumerable<string>? relaunchArguments = null) =>
         Task.Run(() => Arm(policy, helperExecutable, relaunchArguments));

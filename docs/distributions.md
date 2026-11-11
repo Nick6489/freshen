@@ -95,10 +95,9 @@ The C ABI adds `freshen_check_for_kind` and `FRESHEN_PACKAGE_AUTO` (0), FILES (1
 MAC_BUNDLE (2), INNO (3). AUTO delegates to legacy ambiguity checks. Existing
 `freshen_check`, structs, handles and ABI version remain unchanged. New callers
 must deploy a library that exports the additive function. The generated C
-header documents its pointer/status contract. The current high-level C++, .NET
-and Objective-C wrappers still call the legacy check; use separate feeds or
-extend those wrappers to expose explicit kind selection. Inno arming is still
-exposed through the Rust policy API, not their existing installation structs.
+header documents its pointer/status contract. C++ and .NET expose explicit package-kind selection and Inno arming. The
+Objective-C wrapper continues to use the legacy check; use separate feeds for
+that wrapper. New APIs require a matching updated native library.
 
 ## Verification
 

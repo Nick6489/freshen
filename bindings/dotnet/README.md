@@ -171,3 +171,14 @@ deployment, UI dispatch, shutdown and startup confirmation on each target. The
 manual multi-platform NuGet workflow is separate from the single-platform CI
 checks. See [testing and integration](../../TESTING.md) for exact coverage and the
 application acceptance checklist.
+
+## Inno-installed applications
+
+Use explicit Inno package-kind selection for mixed feeds and configure the local
+Inno policy with the existing AppId, installation directory, installer inventory
+path, executable and a writable state root outside the application directory.
+The signed manifest must never supply this local policy. Arm using the Inno
+entry point, save work and exit after helper readiness, and poll durable Inno
+status from a surviving process. Inno owns repair; Freshen does not roll back
+installer changes. See [the Inno guide](../../docs/inno.md) for security and
+lifecycle details. Deploy the matching Rust-built native library.

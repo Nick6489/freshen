@@ -65,3 +65,19 @@ internal unsafe struct NativeInstallPolicy
     public ulong ExitTimeoutSecs;
     public ulong ConfirmationTimeoutSecs;
 }
+
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct NativeInnoPolicy
+{
+    public nuint StructSize;
+    public byte* StateRoot;
+    public byte* Installer;
+    public byte* AppId;
+    public byte* Directory;
+    public byte* Executable;
+    public byte MachineWide;
+    public byte Enhanced;
+    public ulong TimeoutSecs;
+    public byte Relaunch;
+    public ulong ExitTimeoutSecs;
+}

@@ -525,6 +525,17 @@ enum class InstallState : int {
     RolledBack = FRESHEN_STATE_ROLLED_BACK,
     /// The update failed and recovery material was kept.
     Failed = FRESHEN_STATE_FAILED,
+    RebootRequired = FRESHEN_STATE_REBOOT_REQUIRED,
+};
+
+/// Explicit signed artifact kind for this application copy.
+enum class PackageKind : int { Auto = FRESHEN_PACKAGE_AUTO, Files = FRESHEN_PACKAGE_FILES, MacBundle = FRESHEN_PACKAGE_MAC_BUNDLE, Inno = FRESHEN_PACKAGE_INNO };
+
+/// Local Inno policy; never construct this from a downloaded manifest.
+struct InnoPolicy {
+    std::string state_root, installer, app_id, directory, executable;
+    bool machine_wide = false, enhanced = false, relaunch = false;
+    std::uint64_t timeout_seconds = 3600, exit_timeout_seconds = 0;
 };
 
 /// The last installation transaction under an installation root.
@@ -740,7 +751,32 @@ public:
         return Handoff(raw);
     }
 
+    /// Arm a verified Inno installer using explicit local policy. Blocking.
+    Result<Handoff> try_arm_inno(const InnoPolicy& policy, const std::string& helper, const std::vector<std::string>& relaunch_arguments = {}) {
+        if (!handle_ || consumed_) return Error(ErrorCode::AlreadyConsumed, "this update was already armed");
+        for (const std::string* text : {&policy.state_root, &policy.installer, &policy.app_id, &policy.directory, &policy.executable, &helper})
+            if (auto failure = detail::check_text("Inno policy", *text)) return *failure;
+        std::vector<const char*> arguments;
+        for (const auto& text : relaunch_arguments) {
+            if (auto failure = detail::check_text("relaunch_arguments", text)) return *failure;
+            arguments.push_back(text.c_str());
+        }
+        FreshenInnoPolicy native{};
+        native.struct_size = sizeof native; native.state_root = policy.state_root.c_str();
+        native.installer = policy.installer.c_str(); native.app_id = policy.app_id.c_str();
+        native.directory = policy.directory.c_str(); native.executable = policy.executable.c_str();
+        native.machine_wide = policy.machine_wide; native.enhanced = policy.enhanced;
+        native.timeout_secs = policy.timeout_seconds; native.relaunch = policy.relaunch; native.exit_timeout_secs = policy.exit_timeout_seconds;
+        consumed_ = true; FreshenHandoff* raw = nullptr;
+        auto status = freshen_arm_inno(handle_.get(), &native, helper.c_str(), arguments.empty() ? nullptr : arguments.data(), arguments.size(), &raw);
+        if (status != FRESHEN_OK) return detail::error_from_status(status);
+        return Handoff(raw);
+    }
+
 #if FRESHEN_HAS_EXCEPTIONS
+    Handoff arm_inno(const InnoPolicy& policy, const std::string& helper, const std::vector<std::string>& args = {}) {
+        return try_arm_inno(policy, helper, args).value();
+    }
     Handoff arm(const InstallPolicy& policy, const std::string& helper_executable,
                 const std::vector<std::string>& relaunch_arguments = {}) {
         return try_arm(policy, helper_executable, relaunch_arguments).value();
@@ -901,7 +937,7 @@ public:
     /// A failed fetch or a bad signature is an error, never "up to date": success with an
     /// empty optional means the application is current.
     Result<std::optional<Candidate>> try_check(const Source& source, const Cancellation* cancellation = nullptr,
-                                               ProgressHandler progress = {}) {
+                                               ProgressHandler progress = {}, PackageKind kind = PackageKind::Auto) {
         auto guard = begin();
         if (!guard.ok()) {
             return guard.error();
@@ -915,7 +951,7 @@ public:
         const bool reporting = static_cast<bool>(state.handler);
         FreshenCandidate* raw = nullptr;
         const std::int32_t status =
-            freshen_check(impl_->handle.get(), &native, cancellation ? cancellation->native() : nullptr,
+            freshen_check_for_kind(impl_->handle.get(), &native, static_cast<int>(kind), cancellation ? cancellation->native() : nullptr,
                           reporting ? freshen_cpp_progress : nullptr, reporting ? &state : nullptr, &raw);
         if (status != FRESHEN_OK) {
             return error_for(status);
@@ -952,8 +988,8 @@ public:
 #if FRESHEN_HAS_EXCEPTIONS
     /// Like try_check but throws Error on failure. Empty optional = up to date.
     std::optional<Candidate> check(const Source& source, const Cancellation* cancellation = nullptr,
-                                   ProgressHandler progress = {}) {
-        return try_check(source, cancellation, std::move(progress)).value();
+                                   ProgressHandler progress = {}, PackageKind kind = PackageKind::Auto) {
+        return try_check(source, cancellation, std::move(progress), kind).value();
     }
 
     /// Like try_prepare but throws Error on failure.
@@ -1005,6 +1041,18 @@ private:
 // ---------------------------------------------------------------------------------
 
 namespace host {
+
+/// Read the durable Inno status JSON; an empty optional means no status yet.
+inline Result<std::optional<std::string>> try_inno_status_json(const std::string& root) {
+    if (auto failure = detail::check_text("root", root)) return *failure;
+    char* raw = nullptr;
+    auto status = freshen_inno_status(root.c_str(), &raw);
+    if (status != FRESHEN_OK) return detail::error_from_status(status);
+    if (!raw) return std::optional<std::string>();
+    std::string value(raw); freshen_string_free(raw);
+    return std::optional<std::string>(std::move(value));
+}
+
 
 /// The C ABI version of the loaded native library.
 inline std::uint32_t abi_version() noexcept { return freshen_abi_version(); }
@@ -1087,6 +1135,8 @@ inline InstallState state_from_native(std::int32_t state) {
             return InstallState::RollingBack;
         case FRESHEN_STATE_ROLLED_BACK:
             return InstallState::RolledBack;
+        case FRESHEN_STATE_REBOOT_REQUIRED:
+            return InstallState::RebootRequired;
         case FRESHEN_STATE_FAILED:
             return InstallState::Failed;
         default:
